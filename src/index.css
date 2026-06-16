@@ -1,0 +1,75 @@
+@import url("https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@300;400;500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-ink text-bone font-sans antialiased;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0b;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a30;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ff3d2e;
+}
+
+::selection {
+  background: #ff3d2e;
+  color: #fff;
+}
+
+@layer components {
+  .container-x {
+    @apply mx-auto w-full max-w-7xl px-6 md:px-10;
+  }
+  .eyebrow {
+    @apply inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-ember;
+  }
+  .display-stroke {
+    -webkit-text-stroke: 1.5px rgba(244, 241, 234, 0.55);
+    color: transparent;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-ember px-7 py-3.5 text-sm font-bold uppercase tracking-widest text-white transition-all duration-300 hover:bg-white hover:text-ink hover:scale-[1.03] active:scale-95;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-white/20 px-7 py-3.5 text-sm font-bold uppercase tracking-widest text-bone transition-all duration-300 hover:border-ember hover:text-ember;
+  }
+  .field {
+    @apply w-full rounded-xl border border-white/10 bg-ink px-4 py-3.5 text-sm text-bone placeholder:text-ash/70 outline-none transition-colors focus:border-ember;
+  }
+}
+
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.text-gradient-ember {
+  background: linear-gradient(120deg, #ff3d2e 0%, #f5b730 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
