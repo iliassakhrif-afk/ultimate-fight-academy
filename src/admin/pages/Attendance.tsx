@@ -1,0 +1,334 @@
+import { useMemo, useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { motion } from "framer-motion";
+import {
+  Users, CheckCircle2, UserX, Flame, Search, ChevronRight,
+  ClipboardCheck, AlertTriangle, Wallet, ShieldAlert, CalendarX, Zap,
+} from "lucide-react";
+import { useStore } from "../store/StoreProvider";
+import * as S from "../store/selectors";
+import { formatDateLong, daysBetween } from "../store/format";
+import { DISCIPLINE_LABELS, DISCIPLINE_COLORS, DISCIPLINE_SHORT, WEEK_DAYS } from "../constants";
+import type { Member, ClassSession, WeekDay } from "../types";
+import StatCard from "../components/StatCard";
+import Avatar from "../components/Avatar";
+import Heatmap from "../components/charts/Heatmap";
+import WhatsAppReminder from "../components/WhatsAppReminder";
+import EmptyState, { SectionCard } from "../components/EmptyState";
+
+const DOW_LABELS: Record<WeekDay, string> = {
+  LUN: "Lundi", MAR: "Mardi", MER: "Mercredi", JEU: "Jeudi", VEN: "Vendredi", SAM: "Samedi",
+};
+
+export default function Attendance() {
+  const { db, now, checkIn } = useStore();
+  const navigate = useNavigate();
+
+  const todayClasses = useMemo(() => S.todayClasses(db), [db]);
+  const todayDow = (WEEK_DAYS[(new Date(now + "T00:00:00").getDay() + 6) % 7] ?? WEEK_DAYS[0]) as WeekDay;
+
+  // Jour & cours sélectionnés (par défaut: 1er cours du jour, sinon 1er du jour courant)
+  const [selectedDay, setSelectedDay] = useState<WeekDay>(todayDow);
+  const dayClasses = useMemo(
+    () => db.classSessions
+      .filter((c) => c.dayOfWeek === selectedDay && c.isActive)
+      .sort((a, b) => a.startTime.localeCompare(b.startTime)),
+    [db.classSessions, selectedDay],
+  );
+  const [selectedId, setSelectedId] = useState<string>(todayClasses[0]?.id ?? db.classSessions[0]?.id ?? "");
+  const selected: ClassSession | undefined =
+    dayClasses.find((c) => c.id === selectedId) ?? dayClasses[0];
+
+  // KPIs
+  const presentsToday = S.presentsAujourdhui(db);
+  const decroches = useMemo(() => S.membresDecroches(db, 21), [db]);
+  const presenceMoyenne = useMemo(() => {
+    const today = now;
+    const sessionsToday = todayClasses.length;
+    const total = db.attendance.filter((a) => a.date === today && a.status === "present").length;
+    return sessionsToday ? Math.round(total / sessionsToday) : 0;
+  }, [db.attendance, now, todayClasses.length]);
+  const noShows = useMemo(
+    () => db.attendance.filter((a) => a.date === now && a.status === "no_show").length,
+    [db.attendance, now],
+  );
+
+  // Membres éligibles au cours sélectionné
+  const presentSet = useMemo(() => {
+    if (!selected) return new Set<string>();
+    return new Set(
+      db.attendance
+        .filter((a) => a.date === now && a.classSessionId === selected.id && a.status === "present")
+        .map((a) => a.memberId),
+    );
+  }, [db.attendance, now, selected]);
+
+  const eligible = useMemo(() => {
+    if (!selected) return [] as Member[];
+    return db.members
+      .filter((m) => (m.status === "actif" || m.status === "gele") && m.disciplineIds.includes(selected.disciplineId))
+      .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+  }, [db.members, selected]);
+
+  // Recherche rapide (pointer un membre absent de la liste)
+  const [query, setQuery] = useState("");
+  const searchResults = useMemo(() => (query.trim() ? S.searchMembers(db, query) : []), [db, query]);
+
+  const coachName = (id: string) => {
+    const c = db.coaches.find((x) => x.id === id);
+    return c ? `${c.firstName} ${c.lastName}` : "—";
+  };
+
+  // Alerte membre: solde dû / abo expiré / certificat médical périmé
+  const memberFlags = (m: Member) => {
+    const balance = S.memberBalanceDH(db, m.id) > 0;
+    const sub = S.memberSubscription(db, m.id);
+    const subExpired = sub ? daysBetween(sub.endDate, now) < 0 : false;
+    const medExpired = m.medicalCertExpiry ? daysBetween(m.medicalCertExpiry, now) < 0 : false;
+    return { balance, subExpired, medExpired, any: balance || subExpired || medExpired };
+  };
+
+  const present = selected ? presentSet.size : 0;
+  const capacity = selected?.capacity ?? 0;
+  const fillPct = capacity ? Math.min(100, Math.round((present / capacity) * 100)) : 0;
+
+  const doCheckIn = (memberId: string) => {
+    if (!selected || presentSet.has(memberId)) return;
+    checkIn(memberId, selected.id, "kiosque");
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="font-display text-4xl tracking-wide">PRÉSENCES & CHECK-IN</h1>
+          <p className="text-ash">{formatDateLong(now)} — pointage kiosque tactile</p>
+        </div>
+        <div className="rounded-full border border-white/10 bg-coal px-4 py-2 text-sm">
+          <span className="text-ash">Présents aujourd'hui : </span>
+          <span className="font-display text-lg text-[#3ddc84]">{presentsToday}</span>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard index={0} label="Présents aujourd'hui" value={presentsToday} accent="#3ddc84" icon={<Users className="h-4 w-4" />} />
+        <StatCard index={1} label="Présence moy. / cours" value={presenceMoyenne} accent="#f5b730" icon={<CheckCircle2 className="h-4 w-4" />} />
+        <StatCard index={2} label="No-shows du jour" value={noShows} accent="#ff3d2e" icon={<UserX className="h-4 w-4" />} />
+        <StatCard index={3} label="Membres décrochés" value={decroches.length} accent="#9b5cff" icon={<Flame className="h-4 w-4" />} onClick={() => document.getElementById("bloc-decroches")?.scrollIntoView({ behavior: "smooth" })} />
+      </div>
+
+      {/* Sélecteur jour + cours */}
+      <SectionCard
+        title="Choisir un cours"
+        action={
+          <div className="flex flex-wrap gap-1.5">
+            {(WEEK_DAYS as readonly WeekDay[]).map((d) => (
+              <button
+                key={d}
+                onClick={() => { setSelectedDay(d); const first = db.classSessions.filter((c) => c.dayOfWeek === d && c.isActive).sort((a, b) => a.startTime.localeCompare(b.startTime))[0]; if (first) setSelectedId(first.id); }}
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${selectedDay === d ? "bg-ember text-white" : "bg-white/5 text-ash hover:text-bone"} ${d === todayDow ? "ring-1 ring-gold/60" : ""}`}
+                title={d === todayDow ? "Aujourd'hui" : DOW_LABELS[d]}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        {dayClasses.length === 0 ? (
+          <EmptyState icon={<CalendarX className="h-5 w-5" />} title="Aucun cours ce jour" hint={`Pas de séance programmée le ${DOW_LABELS[selectedDay].toLowerCase()}.`} />
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {dayClasses.map((c) => {
+              const active = selected?.id === c.id;
+              const col = DISCIPLINE_COLORS[c.disciplineId];
+              const cPresent = db.attendance.filter((a) => a.classSessionId === c.id && a.date === now && a.status === "present").length;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedId(c.id)}
+                  className={`group flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left transition-colors ${active ? "border-white/25 bg-steel" : "border-white/10 bg-ink hover:border-white/20"}`}
+                  style={active ? { boxShadow: `inset 0 0 0 1px ${col}55` } : undefined}
+                >
+                  <span className="grid h-9 w-9 place-items-center rounded-lg font-display text-[11px]" style={{ background: `${col}22`, color: col }}>
+                    {DISCIPLINE_SHORT[c.disciplineId]}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-bone">{c.startTime} · {c.label}</span>
+                    <span className="block text-[11px] text-ash">{c.room} — {coachName(c.coachId)}</span>
+                  </span>
+                  <span className="ml-1 rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-ash">
+                    {cPresent}/{c.capacity}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </SectionCard>
+
+      {/* Grille check-in */}
+      {selected && (
+        <div className="rounded-2xl border border-white/10 bg-coal p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="grid h-12 w-12 place-items-center rounded-xl font-display text-sm" style={{ background: `${DISCIPLINE_COLORS[selected.disciplineId]}22`, color: DISCIPLINE_COLORS[selected.disciplineId] }}>
+                {DISCIPLINE_SHORT[selected.disciplineId]}
+              </span>
+              <div>
+                <h3 className="font-display text-xl tracking-wide text-bone">{selected.label}</h3>
+                <p className="text-xs text-ash">
+                  {DOW_LABELS[selected.dayOfWeek]} {selected.startTime}–{selected.endTime} · {DISCIPLINE_LABELS[selected.disciplineId]} · {selected.room}
+                </p>
+              </div>
+            </div>
+            {/* Compteur live + jauge capacité */}
+            <div className="min-w-[180px]">
+              <div className="mb-1 flex items-end justify-between text-sm">
+                <span className="text-ash">Présents</span>
+                <span className="font-display text-lg tabular-nums">
+                  <span className="text-[#3ddc84]">{present}</span>
+                  <span className="text-ash">/{capacity}</span>
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-white/8">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ background: fillPct >= 100 ? "#ff3d2e" : "#3ddc84" }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${fillPct}%` }}
+                  transition={{ type: "spring", stiffness: 120, damping: 20 }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {eligible.length === 0 ? (
+            <EmptyState icon={<Users className="h-5 w-5" />} title="Aucun membre éligible" hint="Aucun membre actif ou gelé n'est inscrit à cette discipline." />
+          ) : (
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              {eligible.map((m, i) => {
+                const isPresent = presentSet.has(m.id);
+                const flags = memberFlags(m);
+                return (
+                  <motion.button
+                    key={m.id}
+                    type="button"
+                    onClick={() => doCheckIn(m.id)}
+                    disabled={isPresent}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(i * 0.012, 0.4) }}
+                    whileTap={isPresent ? undefined : { scale: 0.96 }}
+                    className={`relative flex flex-col items-center gap-2 rounded-2xl border p-3.5 text-center transition-colors ${
+                      isPresent
+                        ? "border-[#3ddc84]/40 bg-[#3ddc84]/12 cursor-default"
+                        : "border-white/10 bg-ink hover:border-white/25 active:bg-steel"
+                    }`}
+                  >
+                    {flags.any && !isPresent && (
+                      <span className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-ember text-white" title="Solde dû / abo expiré / certificat médical">
+                        <AlertTriangle className="h-3 w-3" />
+                      </span>
+                    )}
+                    <Avatar first={m.firstName} last={m.lastName} size={48} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-bone">{m.firstName}</span>
+                      <span className="block truncate text-[11px] text-ash">{m.lastName}</span>
+                    </span>
+                    {flags.any && !isPresent && (
+                      <span className="flex flex-wrap items-center justify-center gap-1">
+                        {flags.balance && <span className="inline-flex items-center gap-0.5 rounded-full bg-ember/15 px-1.5 py-0.5 text-[9px] font-semibold text-ember"><Wallet className="h-2.5 w-2.5" />Solde</span>}
+                        {flags.subExpired && <span className="inline-flex items-center gap-0.5 rounded-full bg-ember/15 px-1.5 py-0.5 text-[9px] font-semibold text-ember"><ShieldAlert className="h-2.5 w-2.5" />Expiré</span>}
+                        {flags.medExpired && <span className="inline-flex items-center gap-0.5 rounded-full bg-gold/15 px-1.5 py-0.5 text-[9px] font-semibold text-gold"><AlertTriangle className="h-2.5 w-2.5" />Médical</span>}
+                      </span>
+                    )}
+                    <span className={`mt-0.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${isPresent ? "bg-[#3ddc84] text-ink" : "bg-white/8 text-ash"}`}>
+                      {isPresent ? <><CheckCircle2 className="h-3 w-3" /> Présent</> : <><Zap className="h-3 w-3" /> Pointer</>}
+                    </span>
+                  </motion.button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Recherche rapide pour pointer un membre absent de la liste */}
+          <div className="mt-5 border-t border-white/10 pt-4">
+            <label className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ash">
+              <Search className="h-3.5 w-3.5" /> Pointer un membre absent de la liste
+            </label>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Nom, téléphone ou n° de membre…"
+              className="field w-full"
+            />
+            {searchResults.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                {searchResults.map((m) => {
+                  const isPresent = presentSet.has(m.id);
+                  return (
+                    <div key={m.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-ink px-3 py-2">
+                      <Avatar first={m.firstName} last={m.lastName} size={32} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-bone">{m.firstName} {m.lastName}</p>
+                        <p className="truncate text-[11px] text-ash">{m.memberNo} · {m.phone}</p>
+                      </div>
+                      <button
+                        onClick={() => doCheckIn(m.id)}
+                        disabled={isPresent}
+                        className={isPresent ? "rounded-lg bg-[#3ddc84]/15 px-3 py-1.5 text-xs font-bold text-[#3ddc84]" : "btn-primary px-3 py-1.5 text-xs"}
+                      >
+                        {isPresent ? "Présent ✓" : "Pointer"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Affluence de la semaine */}
+      <SectionCard title="Affluence de la semaine">
+        <Heatmap data={S.attendanceHeatmap(db)} />
+      </SectionCard>
+
+      {/* Membres décrochés */}
+      <div id="bloc-decroches">
+        <SectionCard
+          title="Membres décrochés (> 21 jours)"
+          action={<span className="rounded-full bg-white/5 px-2.5 py-1 text-xs font-semibold text-ash">{decroches.length}</span>}
+        >
+          {decroches.length === 0 ? (
+            <EmptyState icon={<ClipboardCheck className="h-5 w-5" />} title="Personne de décroché 🔥" hint="Tous les membres actifs se sont entraînés récemment." />
+          ) : (
+            <div className="divide-y divide-white/5">
+              {decroches.map((m) => {
+                const last = m.lastAttendanceAt ? daysBetween(now, m.lastAttendanceAt) : null;
+                return (
+                  <div key={m.id} className="flex items-center gap-3 py-2.5">
+                    <Avatar first={m.firstName} last={m.lastName} size={36} />
+                    <Link to={`/admin/membres/${m.id}`} className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
+                      <p className="truncate text-sm font-semibold text-bone hover:text-gold">{m.firstName} {m.lastName}</p>
+                      <p className="text-[11px] text-ash">
+                        {last != null ? `Dernière présence il y a ${last} j` : "Jamais venu"}
+                        {" · "}{m.disciplineIds.map((d) => DISCIPLINE_SHORT[d]).join(" · ")}
+                      </p>
+                    </Link>
+                    <WhatsAppReminder member={m} type="decrochage" compact />
+                    <button onClick={() => navigate(`/admin/membres/${m.id}`)} className="text-ash hover:text-bone" title="Ouvrir la fiche">
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </SectionCard>
+      </div>
+    </div>
+  );
+}

@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { IgIcon, FbIcon, YtIcon, TtIcon } from "./icons";
 import { asset } from "../asset";
 
@@ -51,7 +52,10 @@ export default function Footer() {
       <div className="border-t border-white/5">
         <div className="container-x flex flex-col items-center justify-between gap-3 py-6 text-xs text-ash md:flex-row">
           <p>© {new Date().getFullYear()} Ultimate Fight Academy. Tous droits réservés.</p>
-          <p>Conçu pour les combattants · Mentions légales · CGV</p>
+          <p className="flex items-center gap-3">
+            <span>Conçu pour les combattants</span>
+            <Link to="/admin/login" className="text-ash/70 transition-colors hover:text-ember">Espace admin</Link>
+          </p>
         </div>
       </div>
     </footer>
