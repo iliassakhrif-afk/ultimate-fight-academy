@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -11,7 +11,9 @@ import {
   AlarmClock,
   Layers,
   ArrowRight,
+  Pencil,
 } from "lucide-react";
+import { Modal } from "../components/Overlay";
 import { useStore } from "../store/StoreProvider";
 import * as S from "../store/selectors";
 import { formatDH, formatDateFR, daysBetween } from "../store/format";
@@ -234,6 +236,35 @@ export default function Subscriptions() {
         </div>
       </SectionCard>
 
+      {/* Exceptions de tarif */}
+      <SectionCard
+        title="Exceptions de tarif"
+        action={<span className="text-xs text-ash">{db.priceExceptions.filter((e) => e.active).length} membre(s) avec tarif personnalisé</span>}
+      >
+        {db.priceExceptions.filter((e) => e.active).length === 0 ? (
+          <p className="py-6 text-center text-sm text-ash">Aucune exception. Ajoutez-en depuis la fiche d'un membre (section « Tarif & exceptions »).</p>
+        ) : (
+          <div className="space-y-2">
+            {db.priceExceptions.filter((e) => e.active).map((e) => {
+              const m = db.members.find((x) => x.id === e.memberId);
+              if (!m) return null;
+              return (
+                <button key={e.id} onClick={() => navigate(`/admin/membres/${m.id}`)} className="flex w-full items-center gap-3 rounded-xl border border-white/5 bg-ink px-4 py-2.5 text-left hover:border-white/15">
+                  <Avatar first={m.firstName} last={m.lastName} size={30} />
+                  <div className="flex-1 leading-tight">
+                    <div className="text-sm font-medium text-bone">{m.firstName} {m.lastName}</div>
+                    <div className="text-xs text-ash">{e.label}</div>
+                  </div>
+                  <span className="rounded-full bg-gold/15 px-2.5 py-1 text-xs font-bold text-gold">
+                    {e.type === "percent" ? `−${e.value}%` : e.type === "fixed" ? `−${formatDH(e.value)}` : `${formatDH(e.value)} imposé`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </SectionCard>
+
       {/* Pipeline de renouvellement */}
       <SectionCard
         title="Pipeline de renouvellement"
@@ -369,6 +400,9 @@ export default function Subscriptions() {
 }
 
 function PlanCard({ plan, index, count }: { plan: MembershipPlan; index: number; count: number }) {
+  const { updatePlan } = useStore();
+  const [edit, setEdit] = useState(false);
+  const [form, setForm] = useState({ price6mDH: plan.price6mDH, price12mDH: plan.price12mDH, classesPerWeek: plan.classesPerWeek, registrationFeeDH: plan.registrationFeeDH });
   const accent = PLAN_ACCENTS[plan.id] ?? "#8a8a93";
   const limit =
     plan.disciplineLimit === "toutes"
@@ -393,6 +427,11 @@ function PlanCard({ plan, index, count }: { plan: MembershipPlan; index: number;
           <Crown className="h-3 w-3" /> Populaire
         </span>
       )}
+
+      <button onClick={() => { setForm({ price6mDH: plan.price6mDH, price12mDH: plan.price12mDH, classesPerWeek: plan.classesPerWeek, registrationFeeDH: plan.registrationFeeDH }); setEdit(true); }}
+        className={`absolute ${plan.featured ? "right-4 top-12" : "right-4 top-4"} grid h-7 w-7 place-items-center rounded-lg border border-white/10 text-ash hover:text-bone`} title="Modifier le tarif">
+        <Pencil className="h-3.5 w-3.5" />
+      </button>
 
       <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: accent }}>
         Formule
@@ -425,6 +464,23 @@ function PlanCard({ plan, index, count }: { plan: MembershipPlan; index: number;
           <ArrowRight className="h-3.5 w-3.5" style={{ color: accent }} />
         </span>
       </div>
+
+      <Modal open={edit} onClose={() => setEdit(false)} title={`Tarif — ${plan.name}`}>
+        <div className="space-y-4">
+          {([
+            ["price6mDH", "Prix 6 mois (DH)"],
+            ["price12mDH", "Prix 1 an (DH)"],
+            ["classesPerWeek", "Cours / semaine"],
+            ["registrationFeeDH", "Frais d'inscription (DH)"],
+          ] as const).map(([key, label]) => (
+            <div key={key}>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">{label}</label>
+              <input type="number" min={0} value={form[key]} onChange={(e) => { const v = Number(e.target.value); setForm((f) => ({ ...f, [key]: Number.isFinite(v) && v >= 0 ? v : 0 })); }} className="field text-right tabular-nums" />
+            </div>
+          ))}
+          <button onClick={() => { updatePlan(plan.id, form); setEdit(false); }} className="btn-primary w-full">Enregistrer le tarif</button>
+        </div>
+      </Modal>
     </motion.div>
   );
 }

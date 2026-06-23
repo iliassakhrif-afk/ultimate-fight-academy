@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft, Wallet, CalendarClock, Receipt, BadgeCheck, Award, Activity,
   Phone, MessageCircle, Mail, MapPin, Snowflake, Play, ShieldAlert, UserCog,
-  TrendingUp, Plus, AlertTriangle, CalendarDays, Hash, Flame, Clock,
+  TrendingUp, Plus, AlertTriangle, CalendarDays, Hash, Flame, Clock, Tag, Dumbbell,
 } from "lucide-react";
 
 import { useStore } from "../store/StoreProvider";
@@ -46,7 +46,7 @@ function Bar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function MemberDetail() {
-  const { db, now, freezeMember, promote } = useStore();
+  const { db, now, freezeMember, promote, addPriceException, removePriceException } = useStore();
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
@@ -55,6 +55,7 @@ export default function MemberDetail() {
   const [collectInst, setCollectInst] = useState<string | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
   const [promoteOpen, setPromoteOpen] = useState(false);
+  const [excOpen, setExcOpen] = useState(false);
 
   const installments = useMemo(
     () => (member ? db.installments.filter((i) => i.memberId === id).sort((a, b) => a.sequence - b.sequence) : []),
@@ -361,6 +362,53 @@ export default function MemberDetail() {
             </SectionCard>
           </motion.div>
 
+          {/* TARIF & EXCEPTIONS */}
+          <motion.div {...fade(2)}>
+            <SectionCard
+              title="Tarif & exceptions"
+              action={
+                <button onClick={() => setExcOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-semibold text-ash hover:text-bone">
+                  <Tag className="h-3.5 w-3.5" /> Exception
+                </button>
+              }
+            >
+              {(() => {
+                const base = sub?.basePriceDH ?? (plan ? plan.price12mDH : 0);
+                const eff = S.effectivePrice(db, base, member.id);
+                const exc = S.activePriceException(db, member.id);
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-end justify-between rounded-xl border border-white/10 bg-ink p-4">
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-ash">Tarif appliqué</div>
+                        <div className="mt-1 font-display text-2xl tracking-wide tabular-nums text-gold">{formatDH(eff.price)}</div>
+                      </div>
+                      {eff.discount > 0 && (
+                        <div className="text-right">
+                          <div className="text-xs text-ash line-through">{formatDH(eff.base)}</div>
+                          <div className="text-sm font-semibold text-[#3ddc84]">−{formatDH(eff.discount)}</div>
+                        </div>
+                      )}
+                    </div>
+                    {exc ? (
+                      <div className="flex items-center justify-between rounded-xl border border-gold/30 bg-gold/[0.06] px-4 py-3">
+                        <div>
+                          <div className="text-sm font-semibold text-gold">{exc.label}</div>
+                          <div className="text-xs text-ash">
+                            {exc.type === "percent" ? `−${exc.value}%` : exc.type === "fixed" ? `−${formatDH(exc.value)}` : `Prix imposé ${formatDH(exc.value)}`}
+                          </div>
+                        </div>
+                        <button onClick={() => removePriceException(exc.id)} className="text-xs font-semibold text-ember hover:underline">Retirer</button>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-ash">Aucune exception. Le membre paie le tarif standard de sa formule.</p>
+                    )}
+                  </div>
+                );
+              })()}
+            </SectionCard>
+          </motion.div>
+
           {/* CEINTURE & GRADE */}
           {isGraded && (
             <motion.div {...fade(2)}>
@@ -444,6 +492,27 @@ export default function MemberDetail() {
               )}
             </SectionCard>
           </motion.div>
+
+          {/* TECHNIQUES TRAVAILLÉES */}
+          {(() => {
+            const techs = S.memberTechniques(db, member.id);
+            if (techs.length === 0) return null;
+            return (
+              <motion.div {...fade(3)}>
+                <SectionCard title="Techniques travaillées" action={<span className="text-xs text-ash">{techs.length}</span>}>
+                  <div className="flex flex-wrap gap-2">
+                    {techs.slice(0, 12).map((t) => (
+                      <span key={t.technique.id} className="flex items-center gap-1.5 rounded-full border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-bone" title={`${t.count}× · dernière fois ${formatDateFR(t.lastDate)}`}>
+                        <Dumbbell className="h-3 w-3 text-ember" />
+                        {t.technique.name}
+                        <span className="font-bold text-ember">{t.count}×</span>
+                      </span>
+                    ))}
+                  </div>
+                </SectionCard>
+              </motion.div>
+            );
+          })()}
 
           {/* RELANCE WHATSAPP */}
           {balance > 0 && (
@@ -531,7 +600,49 @@ export default function MemberDetail() {
           setPromoteOpen(false);
         }}
       />
+
+      <ExceptionModal
+        open={excOpen}
+        onClose={() => setExcOpen(false)}
+        onConfirm={(e) => { addPriceException(member.id, e); setExcOpen(false); }}
+      />
     </div>
+  );
+}
+
+/* ---------------- Modale Exception de prix ---------------- */
+function ExceptionModal({
+  open, onClose, onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: (e: { label: string; type: "percent" | "fixed" | "override"; value: number }) => void;
+}) {
+  const [label, setLabel] = useState("Réduction famille");
+  const [type, setType] = useState<"percent" | "fixed" | "override">("percent");
+  const [value, setValue] = useState(20);
+  return (
+    <Modal open={open} onClose={onClose} title="Exception de tarif">
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Motif</label>
+          <input value={label} onChange={(e) => setLabel(e.target.value)} className="field" placeholder="Ex. Réduction famille" />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Type</label>
+          <div className="grid grid-cols-3 gap-2">
+            {([["percent", "Remise %"], ["fixed", "Remise DH"], ["override", "Prix imposé"]] as const).map(([t, lbl]) => (
+              <button key={t} onClick={() => setType(t)} className={`rounded-xl border px-2 py-2.5 text-xs font-semibold ${type === t ? "border-ember bg-ember/15 text-ember" : "border-white/10 text-ash hover:text-bone"}`}>{lbl}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">{type === "percent" ? "Pourcentage (%)" : "Montant (DH)"}</label>
+          <input type="number" value={value} min={0} max={type === "percent" ? 100 : undefined} onChange={(e) => { const v = Number(e.target.value); setValue(Number.isFinite(v) && v >= 0 ? v : 0); }} className="field text-right tabular-nums" />
+        </div>
+        <button onClick={() => label.trim() && onConfirm({ label: label.trim(), type, value: type === "percent" ? Math.min(100, value) : value })} className="btn-primary w-full">Appliquer l'exception</button>
+      </div>
+    </Modal>
   );
 }
 

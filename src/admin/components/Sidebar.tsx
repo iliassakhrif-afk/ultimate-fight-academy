@@ -1,14 +1,14 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, TrendingUp, Users, ClipboardCheck, Award, Wallet, AlarmClock,
-  CreditCard, CalendarDays, Settings, Flame,
+  CreditCard, CalendarDays, Settings, Flame, Dumbbell,
 } from "lucide-react";
 import { NAV_GROUPS } from "../constants";
 import { useStore } from "../store/StoreProvider";
 import { asset } from "../../asset";
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  LayoutDashboard, TrendingUp, Users, ClipboardCheck, Award, Wallet, AlarmClock, CreditCard, CalendarDays, Settings,
+  LayoutDashboard, TrendingUp, Users, ClipboardCheck, Award, Wallet, AlarmClock, CreditCard, CalendarDays, Settings, Dumbbell,
 };
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {

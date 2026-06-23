@@ -1,4 +1,4 @@
-import type { DB, Member, DisciplineId, WeekDay } from "../types";
+import type { DB, Member, DisciplineId, WeekDay, Technique, PriceException } from "../types";
 import { daysBetween, monthKey, addMonths, parseISO } from "./format";
 import { WEEK_DAYS } from "../constants";
 
@@ -190,6 +190,81 @@ export const todayClasses = (db: DB) => {
       present: db.attendance.filter((a) => a.classSessionId === c.id && a.date === today && a.status === "present").length,
     }))
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
+};
+
+// --- Techniques & séances ---
+export const sessionInstance = (db: DB, classSessionId: string, date: string) =>
+  db.sessionInstances.find((s) => s.classSessionId === classSessionId && s.date === date) || null;
+
+export interface PractitionerRow { member: Member; count: number; lastDate: string; }
+
+// Membres ayant pratiqué une technique (via les séances où elle a été enseignée + présences)
+export const membersWhoPracticed = (db: DB, techniqueId: string): PractitionerRow[] => {
+  const sessions = db.sessionInstances.filter((s) => s.techniqueIds.includes(techniqueId));
+  const keys = new Set(sessions.map((s) => `${s.classSessionId}__${s.date}`));
+  const agg = new Map<string, { count: number; lastDate: string }>();
+  const counted = new Set<string>(); // une séance ne compte qu'une fois par membre
+  db.attendance.forEach((a) => {
+    if (a.status !== "present") return;
+    const k = `${a.classSessionId}__${a.date}`;
+    if (!keys.has(k)) return;
+    const dedupe = `${a.memberId}__${k}`;
+    if (counted.has(dedupe)) return;
+    counted.add(dedupe);
+    const cur = agg.get(a.memberId);
+    if (cur) { cur.count++; if (a.date > cur.lastDate) cur.lastDate = a.date; }
+    else agg.set(a.memberId, { count: 1, lastDate: a.date });
+  });
+  const rows: PractitionerRow[] = [];
+  agg.forEach((v, memberId) => {
+    const member = db.members.find((m) => m.id === memberId);
+    if (member) rows.push({ member, count: v.count, lastDate: v.lastDate });
+  });
+  return rows.sort((a, b) => b.count - a.count || b.lastDate.localeCompare(a.lastDate));
+};
+
+export const techniqueStats = (db: DB, techniqueId: string): { timesTaught: number; memberCount: number; lastTaught: string | null } => {
+  const sessions = db.sessionInstances.filter((s) => s.techniqueIds.includes(techniqueId));
+  const rows = membersWhoPracticed(db, techniqueId);
+  const lastTaught = sessions.reduce<string | null>((m, s) => (m && m > s.date ? m : s.date), null);
+  return { timesTaught: sessions.length, memberCount: rows.length, lastTaught };
+};
+
+// Techniques pratiquées par un membre (avec nb de fois + dernière date)
+export interface MemberTechRow { technique: Technique; count: number; lastDate: string; }
+export const memberTechniques = (db: DB, memberId: string): MemberTechRow[] => {
+  const myKeys = new Set(db.attendance.filter((a) => a.memberId === memberId && a.status === "present").map((a) => `${a.classSessionId}__${a.date}`));
+  const agg = new Map<string, { count: number; lastDate: string }>();
+  db.sessionInstances.forEach((s) => {
+    if (!myKeys.has(`${s.classSessionId}__${s.date}`)) return;
+    s.techniqueIds.forEach((tid) => {
+      const cur = agg.get(tid);
+      if (cur) { cur.count++; if (s.date > cur.lastDate) cur.lastDate = s.date; }
+      else agg.set(tid, { count: 1, lastDate: s.date });
+    });
+  });
+  const rows: MemberTechRow[] = [];
+  agg.forEach((v, tid) => {
+    const technique = db.techniques.find((t) => t.id === tid);
+    if (technique) rows.push({ technique, count: v.count, lastDate: v.lastDate });
+  });
+  return rows.sort((a, b) => b.lastDate.localeCompare(a.lastDate));
+};
+
+// --- Tarification ---
+export const activePriceException = (db: DB, memberId: string): PriceException | null =>
+  db.priceExceptions.find((e) => e.memberId === memberId && e.active) || null;
+
+export interface EffectivePrice { base: number; price: number; discount: number; label: string | null; }
+export const effectivePrice = (db: DB, base: number, memberId: string): EffectivePrice => {
+  const exc = activePriceException(db, memberId);
+  if (!exc) return { base, price: base, discount: 0, label: null };
+  let price = base;
+  if (exc.type === "percent") price = base * (1 - exc.value / 100);
+  else if (exc.type === "fixed") price = base - exc.value;
+  else price = exc.value; // override
+  price = Math.max(0, Math.round(price));
+  return { base, price, discount: Math.max(0, base - price), label: exc.label };
 };
 
 // --- Recherche globale ---

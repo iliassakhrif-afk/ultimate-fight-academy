@@ -199,6 +199,42 @@ export interface GymSettings {
   receiptFooterText: string;
 }
 
+// Techniques & contenu de séance
+export type GiType = "gi" | "nogi" | "both";
+
+export interface Technique {
+  id: string;
+  discipline: DisciplineId;
+  name: string;
+  category: string; // Garde, Passage, Soumission, Renversement, Contrôle, Projection, Échappe, Mouvement…
+  gi: GiType;
+  position: string; // ex. "Garde fermée", "Montée", "Debout"
+  isCustom: boolean;
+  createdAt: string;
+}
+
+// Une séance concrète = un cours (classSession) tenu à une date donnée
+export interface SessionInstance {
+  id: string; // `${classSessionId}__${date}`
+  classSessionId: string;
+  date: string;
+  disciplineId: DisciplineId;
+  techniqueIds: string[];
+  coachId: string;
+  notes: string;
+}
+
+// Exception de tarif appliquée à un membre
+export interface PriceException {
+  id: string;
+  memberId: string;
+  label: string; // raison: Famille, Étudiant, Fidélité, Geste commercial…
+  type: "percent" | "fixed" | "override"; // remise %, remise fixe DH, ou prix imposé DH
+  value: number;
+  active: boolean;
+  createdAt: string;
+}
+
 export interface DB {
   meta: { seedVersion: number; demoClock: string };
   members: Member[];
@@ -212,9 +248,13 @@ export interface DB {
   coaches: Coach[];
   leads: Lead[];
   activity: ActivityLog[];
+  techniques: Technique[];
+  sessionInstances: SessionInstance[];
+  priceExceptions: PriceException[];
   settings: GymSettings;
 }
 
 export type Collection =
   | "members" | "subscriptions" | "installments" | "payments" | "attendance"
-  | "classSessions" | "plans" | "belts" | "coaches" | "leads" | "activity";
+  | "classSessions" | "plans" | "belts" | "coaches" | "leads" | "activity"
+  | "techniques" | "sessionInstances" | "priceExceptions";

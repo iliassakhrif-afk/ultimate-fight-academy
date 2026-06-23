@@ -1,7 +1,7 @@
 import type { DisciplineId, BeltRank, MemberStatus, InstallmentStatus } from "./types";
 
 export const DEMO_CLOCK = "2026-06-18";
-export const SEED_VERSION = 2;
+export const SEED_VERSION = 4;
 export const ADMIN_PIN = "1234";
 export const LS_PREFIX = "ufa.admin.v1";
 export const LS_AUTH = "ufa.admin.auth";
@@ -80,6 +80,7 @@ export const NAV_GROUPS: { group: string; items: { label: string; to: string; ic
     items: [
       { label: "Membres", to: "/admin/membres", icon: "Users" },
       { label: "Présences", to: "/admin/presences", icon: "ClipboardCheck" },
+      { label: "Techniques", to: "/admin/techniques", icon: "Dumbbell" },
       { label: "Grades & ceintures", to: "/admin/grades", icon: "Award" },
     ],
   },

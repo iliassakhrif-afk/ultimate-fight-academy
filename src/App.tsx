@@ -10,6 +10,7 @@ const Members = lazy(() => import("./admin/pages/Members"));
 const MemberDetail = lazy(() => import("./admin/pages/MemberDetail"));
 const MemberWizard = lazy(() => import("./admin/pages/MemberWizard"));
 const Attendance = lazy(() => import("./admin/pages/Attendance"));
+const Techniques = lazy(() => import("./admin/pages/Techniques"));
 const Schedule = lazy(() => import("./admin/pages/Schedule"));
 const Payments = lazy(() => import("./admin/pages/Payments"));
 const DuesReminders = lazy(() => import("./admin/pages/DuesReminders"));
@@ -42,6 +43,7 @@ export default function App() {
             <Route path="membres/nouveau" element={<MemberWizard />} />
             <Route path="membres/:id" element={<MemberDetail />} />
             <Route path="presences" element={<Attendance />} />
+            <Route path="techniques" element={<Techniques />} />
             <Route path="planning" element={<Schedule />} />
             <Route path="paiements" element={<Payments />} />
             <Route path="echeances" element={<DuesReminders />} />

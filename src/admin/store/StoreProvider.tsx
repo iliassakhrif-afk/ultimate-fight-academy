@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
-import type { DB, Member, PayMethod, DisciplineId, BeltRank, AttendanceRecord } from "../types";
+import type { DB, Member, PayMethod, DisciplineId, BeltRank, AttendanceRecord, MembershipPlan, Technique, PriceException, PlanId } from "../types";
 import { loadDB, saveDB, resetDB as resetDBFile, exportDB, importDB } from "./db";
 import { getNow, memberBalanceDH } from "./selectors";
 
@@ -22,6 +22,12 @@ interface StoreCtx {
   addMember: (m: Partial<Member>) => Member;
   updateMember: (id: string, patch: Partial<Member>) => void;
   freezeMember: (id: string) => void;
+  addTechnique: (t: Omit<Technique, "id" | "isCustom" | "createdAt">) => void;
+  removeTechnique: (id: string) => void;
+  setSessionTechniques: (classSessionId: string, date: string, techniqueIds: string[], notes?: string) => void;
+  updatePlan: (planId: PlanId, patch: Partial<MembershipPlan>) => void;
+  addPriceException: (memberId: string, e: Omit<PriceException, "id" | "memberId" | "active" | "createdAt">) => void;
+  removePriceException: (id: string) => void;
   resetDemo: () => void;
   exportJSON: () => void;
   importJSON: (file: File) => Promise<void>;
@@ -185,6 +191,57 @@ export function AdminStoreProvider({ children }: { children: ReactNode }) {
     [mutate]
   );
 
+  const addTechnique = useCallback((t: Omit<Technique, "id" | "isCustom" | "createdAt">) => {
+    mutate((prev) => ({
+      ...prev,
+      techniques: [{ ...t, id: uid("t"), isCustom: true, createdAt: getNow(prev) }, ...prev.techniques],
+    }));
+  }, [mutate]);
+
+  const removeTechnique = useCallback((id: string) => {
+    mutate((prev) => {
+      const tech = prev.techniques.find((t) => t.id === id);
+      if (!tech || !tech.isCustom) return prev; // on ne supprime que les techniques ajoutées
+      return {
+        ...prev,
+        techniques: prev.techniques.filter((t) => t.id !== id),
+        sessionInstances: prev.sessionInstances.map((s) => ({ ...s, techniqueIds: s.techniqueIds.filter((x) => x !== id) })),
+      };
+    });
+  }, [mutate]);
+
+  const setSessionTechniques = useCallback((classSessionId: string, date: string, techniqueIds: string[], notes = "") => {
+    mutate((prev) => {
+      const cs = prev.classSessions.find((c) => c.id === classSessionId);
+      if (!cs) return prev;
+      const id = `${classSessionId}__${date}`;
+      const exists = prev.sessionInstances.some((s) => s.id === id);
+      const inst = { id, classSessionId, date, disciplineId: cs.disciplineId, techniqueIds, coachId: cs.coachId, notes };
+      const sessionInstances = exists
+        ? prev.sessionInstances.map((s) => (s.id === id ? { ...s, techniqueIds, notes } : s))
+        : [inst, ...prev.sessionInstances];
+      return { ...prev, sessionInstances };
+    });
+  }, [mutate]);
+
+  const updatePlan = useCallback((planId: PlanId, patch: Partial<MembershipPlan>) => {
+    mutate((prev) => ({ ...prev, plans: prev.plans.map((p) => (p.id === planId ? { ...p, ...patch } : p)) }));
+  }, [mutate]);
+
+  const addPriceException = useCallback((memberId: string, e: Omit<PriceException, "id" | "memberId" | "active" | "createdAt">) => {
+    const value = e.type === "percent" ? Math.min(100, Math.max(0, e.value)) : Math.max(0, e.value);
+    mutate((prev) => {
+      // une seule exception active par membre
+      const priceExceptions = prev.priceExceptions.map((x) => (x.memberId === memberId ? { ...x, active: false } : x));
+      priceExceptions.unshift({ ...e, value, id: uid("pe"), memberId, active: true, createdAt: getNow(prev) });
+      return { ...prev, priceExceptions };
+    });
+  }, [mutate]);
+
+  const removePriceException = useCallback((id: string) => {
+    mutate((prev) => ({ ...prev, priceExceptions: prev.priceExceptions.filter((x) => x.id !== id) }));
+  }, [mutate]);
+
   const resetDemo = useCallback(() => { const next = resetDBFile(); setDb({ ...next }); }, []);
   const exportJSON = useCallback(() => {
     exportDB(db);
@@ -194,8 +251,8 @@ export function AdminStoreProvider({ children }: { children: ReactNode }) {
   const saveBackup = useCallback(() => exportJSON(), [exportJSON]);
 
   const value = useMemo<StoreCtx>(
-    () => ({ db, now: getNow(db), refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, resetDemo, exportJSON, importJSON, saveBackup }),
-    [db, refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, resetDemo, exportJSON, importJSON, saveBackup]
+    () => ({ db, now: getNow(db), refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, resetDemo, exportJSON, importJSON, saveBackup }),
+    [db, refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, resetDemo, exportJSON, importJSON, saveBackup]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

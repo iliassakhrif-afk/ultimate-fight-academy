@@ -1,11 +1,13 @@
 import type {
   DB, Member, Subscription, Installment, Payment, AttendanceRecord, ClassSession,
   MembershipPlan, Belt, Coach, Lead, ActivityLog, GymSettings, DisciplineId, BeltRank,
+  Technique, SessionInstance, PriceException,
 } from "../types";
 import {
   DEMO_CLOCK, SEED_VERSION, ADMIN_PIN, MA_FIRST_M, MA_FIRST_F, MA_LAST, KENITRA_AREAS,
   ADULT_BELTS, KIDS_BELTS,
 } from "../constants";
+import { TECHNIQUE_CATALOG } from "../techniques";
 import { addDays, addMonths, parseISO } from "./format";
 
 // PRNG déterministe (mulberry32) → mêmes données à chaque seed
@@ -74,6 +76,10 @@ export function buildSeed(): DB {
   const now = DEMO_CLOCK;
 
   const classSessions = buildClassSessions();
+  const techniques: Technique[] = TECHNIQUE_CATALOG.map((t, i) => ({
+    id: `t_${i + 1}`, discipline: t.discipline, name: t.name, category: t.category,
+    gi: t.gi, position: t.position, isCustom: false, createdAt: addDays(now, -200),
+  }));
   const members: Member[] = [];
   const subscriptions: Subscription[] = [];
   const installments: Installment[] = [];
@@ -220,6 +226,7 @@ export function buildSeed(): DB {
         const perWeek = isKid ? 2 : ri(2, 3);
         let last: string | null = null;
         let streak = 0;
+        const seenSess = new Set<string>(); // évite les présences en double (même cours + même date)
         for (let w = weeks; w >= 1; w--) {
           // un membre "décroché" s'arrête il y a ~4 semaines
           if (decroche && w <= 4) break;
@@ -233,6 +240,9 @@ export function buildSeed(): DB {
             const delta = (DAY_INDEX[cs.dayOfWeek] - target.getDay() + 7) % 7;
             const date = addDays(weekStart, delta);
             if (parseISO(date) > parseISO(now)) continue;
+            const sessKey = `${cs.id}__${date}`;
+            if (seenSess.has(sessKey)) continue; // une seule présence par séance physique
+            seenSess.add(sessKey);
             attendance.push({
               id: `a_${idx}_${w}_${s}`, memberId: id, classSessionId: cs.id, disciplineId: cs.disciplineId,
               date, checkInTime: cs.startTime, method: rnd() < 0.7 ? "manuel" : "kiosque", status: "present",
@@ -299,6 +309,53 @@ export function buildSeed(): DB {
   });
   activity.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
+  // Séances concrètes (classSession + date) à partir des présences, avec techniques travaillées
+  const sessionInstances: SessionInstance[] = [];
+  const seenSession = new Set<string>();
+  const techByDisc: Record<string, Technique[]> = {};
+  techniques.forEach((t) => { (techByDisc[t.discipline] ||= []).push(t); });
+  attendance.forEach((a) => {
+    const key = `${a.classSessionId}__${a.date}`;
+    if (seenSession.has(key)) return;
+    seenSession.add(key);
+    const cs = classSessions.find((c) => c.id === a.classSessionId);
+    if (!cs) return;
+    const pool = techByDisc[cs.disciplineId] || techByDisc["bjj"] || [];
+    // 2 à 4 techniques par séance (déterministe via rnd)
+    const n = ri(2, 4);
+    const chosen: string[] = [];
+    let guard = 0;
+    while (chosen.length < n && pool.length && guard++ < 30) {
+      const t = pick(pool);
+      // pour le BJJ, filtre selon la variante Gi/No-Gi du cours
+      if (cs.disciplineId === "bjj" && cs.variant === "Gi" && t.gi === "nogi") continue;
+      if (cs.disciplineId === "bjj" && cs.variant === "No-Gi" && t.gi === "gi") continue;
+      if (!chosen.includes(t.id)) chosen.push(t.id);
+    }
+    sessionInstances.push({
+      id: key, classSessionId: cs.id, date: a.date, disciplineId: cs.disciplineId,
+      techniqueIds: chosen, coachId: cs.coachId, notes: "",
+    });
+  });
+
+  // Exceptions de tarif sur quelques membres actifs
+  const activeForExc = members.filter((m) => m.status === "actif");
+  const priceExceptions: PriceException[] = [];
+  const excDefs: { type: PriceException["type"]; value: number; label: string }[] = [
+    { type: "percent", value: 20, label: "Réduction famille" },
+    { type: "percent", value: 15, label: "Tarif étudiant" },
+    { type: "override", value: 1200, label: "Tarif fidélité (imposé)" },
+    { type: "fixed", value: 300, label: "Geste commercial" },
+  ];
+  excDefs.forEach((d, i) => {
+    const m = activeForExc[(i * 7 + 2) % Math.max(1, activeForExc.length)];
+    if (!m) return;
+    priceExceptions.push({
+      id: `pe_${i + 1}`, memberId: m.id, label: d.label, type: d.type, value: d.value,
+      active: true, createdAt: addDays(now, -ri(20, 120)),
+    });
+  });
+
   const settings: GymSettings = {
     name: "Ultimate Fight Academy", city: "Kénitra", address: "Av. Mohamed V, Kénitra, Maroc",
     phone: "+212 6 12 34 56 78", whatsapp: "+212 6 12 34 56 78", currency: "DH",
@@ -309,6 +366,7 @@ export function buildSeed(): DB {
   return {
     meta: { seedVersion: SEED_VERSION, demoClock: DEMO_CLOCK },
     members, subscriptions, installments, payments, attendance, classSessions,
-    plans: PLANS, belts, coaches: COACHES, leads, activity, settings,
+    plans: PLANS, belts, coaches: COACHES, leads, activity,
+    techniques, sessionInstances, priceExceptions, settings,
   };
 }

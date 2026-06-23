@@ -3,18 +3,20 @@ import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Users, CheckCircle2, UserX, Flame, Search, ChevronRight,
-  ClipboardCheck, AlertTriangle, Wallet, ShieldAlert, CalendarX, Zap,
+  ClipboardCheck, AlertTriangle, Wallet, ShieldAlert, CalendarX, Zap, Dumbbell, Plus, Check,
 } from "lucide-react";
 import { useStore } from "../store/StoreProvider";
 import * as S from "../store/selectors";
 import { formatDateLong, daysBetween } from "../store/format";
 import { DISCIPLINE_LABELS, DISCIPLINE_COLORS, DISCIPLINE_SHORT, WEEK_DAYS } from "../constants";
+import { GI_META } from "../techniques";
 import type { Member, ClassSession, WeekDay } from "../types";
 import StatCard from "../components/StatCard";
 import Avatar from "../components/Avatar";
 import Heatmap from "../components/charts/Heatmap";
 import WhatsAppReminder from "../components/WhatsAppReminder";
 import EmptyState, { SectionCard } from "../components/EmptyState";
+import { Modal } from "../components/Overlay";
 
 const DOW_LABELS: Record<WeekDay, string> = {
   LUN: "Lundi", MAR: "Mardi", MER: "Mercredi", JEU: "Jeudi", VEN: "Vendredi", SAM: "Samedi",
@@ -291,6 +293,9 @@ export default function Attendance() {
         </div>
       )}
 
+      {/* Techniques de la séance */}
+      {selected && <SessionTechniques classSession={selected} date={now} />}
+
       {/* Affluence de la semaine */}
       <SectionCard title="Affluence de la semaine">
         <Heatmap data={S.attendanceHeatmap(db)} />
@@ -330,5 +335,104 @@ export default function Attendance() {
         </SectionCard>
       </div>
     </div>
+  );
+}
+
+/* ---------------- Techniques travaillées durant la séance ---------------- */
+function SessionTechniques({ classSession, date }: { classSession: ClassSession; date: string }) {
+  const { db, setSessionTechniques } = useStore();
+  const [open, setOpen] = useState(false);
+  const inst = S.sessionInstance(db, classSession.id, date);
+  const current = inst?.techniqueIds ?? [];
+  const techById = useMemo(() => new Map(db.techniques.map((t) => [t.id, t])), [db.techniques]);
+
+  const catalog = useMemo(
+    () => db.techniques
+      .filter((t) => t.discipline === classSession.disciplineId)
+      .filter((t) => !(classSession.disciplineId === "bjj" && classSession.variant === "Gi" && t.gi === "nogi"))
+      .filter((t) => !(classSession.disciplineId === "bjj" && classSession.variant === "No-Gi" && t.gi === "gi")),
+    [db.techniques, classSession],
+  );
+  const [draft, setDraft] = useState<string[]>(current);
+  const [q, setQ] = useState("");
+
+  const openEditor = () => { setDraft(current); setQ(""); setOpen(true); };
+  const toggle = (id: string) => setDraft((d) => (d.includes(id) ? d.filter((x) => x !== id) : [...d, id]));
+  const save = () => { setSessionTechniques(classSession.id, date, draft); setOpen(false); };
+
+  const grouped = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    const filtered = catalog.filter((x) => !t || x.name.toLowerCase().includes(t) || x.position.toLowerCase().includes(t));
+    const map: Record<string, typeof filtered> = {};
+    filtered.forEach((x) => { (map[x.category] ||= []).push(x); });
+    return Object.entries(map);
+  }, [catalog, q]);
+
+  return (
+    <SectionCard
+      title="Techniques de la séance"
+      action={
+        <button onClick={openEditor} className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-semibold text-ash hover:text-bone">
+          <Plus className="h-3.5 w-3.5" /> {current.length ? "Modifier" : "Renseigner"}
+        </button>
+      }
+    >
+      <div className="mb-3 flex items-center gap-2 text-sm text-ash">
+        <Dumbbell className="h-4 w-4 text-ember" />
+        {classSession.label} · {classSession.startTime}
+        {classSession.variant && <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-xs">{classSession.variant}</span>}
+      </div>
+      {current.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-ash">
+          Aucune technique renseignée pour cette séance. Cliquez sur « Renseigner » pour enregistrer ce qui a été travaillé.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {current.map((id) => {
+            const t = techById.get(id);
+            if (!t) return null;
+            return (
+              <span key={id} className="flex items-center gap-1.5 rounded-full border border-white/10 bg-ink px-3 py-1.5 text-sm text-bone">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: GI_META[t.gi].color }} />
+                {t.name}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal open={open} onClose={() => setOpen(false)} title="Techniques travaillées" width="max-w-2xl">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ash" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher une technique…" className="field pl-9" />
+            </div>
+            <span className="shrink-0 rounded-full bg-ember/15 px-3 py-1.5 text-sm font-bold text-ember">{draft.length} sélectionnée{draft.length > 1 ? "s" : ""}</span>
+          </div>
+          <div className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
+            {grouped.map(([cat, items]) => (
+              <div key={cat}>
+                <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-ash">{cat}</div>
+                <div className="flex flex-wrap gap-2">
+                  {items.map((t) => {
+                    const on = draft.includes(t.id);
+                    return (
+                      <button key={t.id} onClick={() => toggle(t.id)}
+                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors ${on ? "border-ember bg-ember/15 text-ember" : "border-white/10 text-ash hover:text-bone"}`}>
+                        {on && <Check className="h-3.5 w-3.5" />}
+                        {t.name}
+                        <span className="text-[10px] font-bold" style={{ color: GI_META[t.gi].color }}>{GI_META[t.gi].short}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <button onClick={save} className="btn-primary w-full">Enregistrer ({draft.length})</button>
+        </div>
+      </Modal>
+    </SectionCard>
   );
 }
