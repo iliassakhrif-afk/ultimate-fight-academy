@@ -222,6 +222,17 @@ export interface Technique {
   position: string; // ex. "Garde fermée", "Montée", "Debout"
   isCustom: boolean;
   createdAt: string;
+  videoUrl?: string | null; // vidéothèque : lien MP4 ou YouTube
+}
+
+// Réservation d'un cours (occurrence = classSession + date)
+export interface Booking {
+  id: string;
+  memberId: string;
+  classSessionId: string;
+  date: string; // jour ISO de l'occurrence
+  status: "reserve" | "liste_attente" | "annule" | "present";
+  createdAt: string;
 }
 
 // Une séance concrète = un cours (classSession) tenu à une date donnée
@@ -263,10 +274,11 @@ export interface DB {
   sessionInstances: SessionInstance[];
   priceExceptions: PriceException[];
   families: Family[];
+  bookings: Booking[];
   settings: GymSettings;
 }
 
 export type Collection =
   | "members" | "subscriptions" | "installments" | "payments" | "attendance"
   | "classSessions" | "plans" | "belts" | "coaches" | "leads" | "activity"
-  | "techniques" | "sessionInstances" | "priceExceptions" | "families";
+  | "techniques" | "sessionInstances" | "priceExceptions" | "families" | "bookings";

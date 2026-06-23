@@ -46,6 +46,9 @@ interface StoreCtx {
   addClassSession: (c: Partial<import("../types").ClassSession>) => void;
   updateClassSession: (id: string, patch: Partial<import("../types").ClassSession>) => void;
   removeClassSession: (id: string) => void;
+  reserveClass: (memberId: string, classSessionId: string, date: string) => "reserve" | "liste_attente" | "deja" | null;
+  cancelBooking: (bookingId: string) => void;
+  setTechniqueVideo: (techniqueId: string, videoUrl: string | null) => void;
   resetDemo: () => void;
   exportJSON: () => void;
   importJSON: (file: File) => Promise<void>;
@@ -420,6 +423,45 @@ export function AdminStoreProvider({ children }: { children: ReactNode }) {
     mutate((prev) => ({ ...prev, classSessions: prev.classSessions.filter((c) => c.id !== id) }));
   }, [mutate]);
 
+  // --- Réservations ---
+  const reserveClass = useCallback((memberId: string, classSessionId: string, date: string): "reserve" | "liste_attente" | "deja" | null => {
+    let result: "reserve" | "liste_attente" | "deja" | null = null;
+    const stamp = new Date().toTimeString().slice(0, 8);
+    mutate((prev) => {
+      const cs = prev.classSessions.find((c) => c.id === classSessionId);
+      if (!cs) { result = null; return prev; }
+      const active = prev.bookings.filter((b) => b.classSessionId === classSessionId && b.date === date && b.status !== "annule");
+      if (active.some((b) => b.memberId === memberId)) { result = "deja"; return prev; }
+      const reserved = active.filter((b) => b.status === "reserve" || b.status === "present").length;
+      const status = reserved < cs.capacity ? "reserve" : "liste_attente";
+      result = status;
+      // createdAt horodaté (heure réelle) pour un ordre FIFO déterministe de la liste d'attente
+      const booking = { id: uid("bk"), memberId, classSessionId, date, status: status as "reserve" | "liste_attente", createdAt: getNow(prev) + "T" + stamp };
+      return { ...prev, bookings: [booking, ...prev.bookings] };
+    });
+    return result;
+  }, [mutate]);
+
+  const cancelBooking = useCallback((bookingId: string) => {
+    mutate((prev) => {
+      const bk = prev.bookings.find((b) => b.id === bookingId);
+      if (!bk) return prev;
+      let bookings = prev.bookings.map((b) => (b.id === bookingId ? { ...b, status: "annule" as const } : b));
+      // si une place se libère, promouvoir le 1er de la liste d'attente
+      if (bk.status === "reserve") {
+        const waiting = bookings
+          .filter((b) => b.classSessionId === bk.classSessionId && b.date === bk.date && b.status === "liste_attente")
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0];
+        if (waiting) bookings = bookings.map((b) => (b.id === waiting.id ? { ...b, status: "reserve" as const } : b));
+      }
+      return { ...prev, bookings };
+    });
+  }, [mutate]);
+
+  const setTechniqueVideo = useCallback((techniqueId: string, videoUrl: string | null) => {
+    mutate((prev) => ({ ...prev, techniques: prev.techniques.map((t) => (t.id === techniqueId ? { ...t, videoUrl } : t)) }));
+  }, [mutate]);
+
   const resetDemo = useCallback(() => { const next = resetDBFile(); setDb({ ...next }); }, []);
   const exportJSON = useCallback(() => {
     exportDB(db);
@@ -429,8 +471,8 @@ export function AdminStoreProvider({ children }: { children: ReactNode }) {
   const saveBackup = useCallback(() => exportJSON(), [exportJSON]);
 
   const value = useMemo<StoreCtx>(
-    () => ({ db, now: getNow(db), refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, createSubscription, renewSubscription, freezeSubscription, cancelSubscription, markAttendance, removeAttendance, convertLead, updateLead, addLead, logReminder, createFamily, setFamilyMembers, updateSettings, addClassSession, updateClassSession, removeClassSession, resetDemo, exportJSON, importJSON, saveBackup }),
-    [db, refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, createSubscription, renewSubscription, freezeSubscription, cancelSubscription, markAttendance, removeAttendance, convertLead, updateLead, addLead, logReminder, createFamily, setFamilyMembers, updateSettings, addClassSession, updateClassSession, removeClassSession, resetDemo, exportJSON, importJSON, saveBackup]
+    () => ({ db, now: getNow(db), refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, createSubscription, renewSubscription, freezeSubscription, cancelSubscription, markAttendance, removeAttendance, convertLead, updateLead, addLead, logReminder, createFamily, setFamilyMembers, updateSettings, addClassSession, updateClassSession, removeClassSession, reserveClass, cancelBooking, setTechniqueVideo, resetDemo, exportJSON, importJSON, saveBackup }),
+    [db, refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, createSubscription, renewSubscription, freezeSubscription, cancelSubscription, markAttendance, removeAttendance, convertLead, updateLead, addLead, logReminder, createFamily, setFamilyMembers, updateSettings, addClassSession, updateClassSession, removeClassSession, reserveClass, cancelBooking, setTechniqueVideo, resetDemo, exportJSON, importJSON, saveBackup]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

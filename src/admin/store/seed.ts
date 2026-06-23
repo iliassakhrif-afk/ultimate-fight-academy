@@ -1,7 +1,7 @@
 import type {
   DB, Member, Subscription, Installment, Payment, AttendanceRecord, ClassSession,
   MembershipPlan, Belt, Coach, Lead, ActivityLog, GymSettings, DisciplineId, BeltRank,
-  Technique, SessionInstance, PriceException, Family,
+  Technique, SessionInstance, PriceException, Family, Booking,
 } from "../types";
 import {
   DEMO_CLOCK, SEED_VERSION, ADMIN_PIN, MA_FIRST_M, MA_FIRST_F, MA_LAST, KENITRA_AREAS,
@@ -78,8 +78,15 @@ export function buildSeed(): DB {
   const classSessions = buildClassSessions();
   const techniques: Technique[] = TECHNIQUE_CATALOG.map((t, i) => ({
     id: `t_${i + 1}`, discipline: t.discipline, name: t.name, category: t.category,
-    gi: t.gi, position: t.position, isCustom: false, createdAt: addDays(now, -200),
+    gi: t.gi, position: t.position, isCustom: false, createdAt: addDays(now, -200), videoUrl: null,
   }));
+  // Vidéos de démonstration (chemins relatifs — préfixés par le base path à la lecture)
+  const setVid = (pred: (t: Technique) => boolean, url: string) => { const t = techniques.find(pred); if (t) t.videoUrl = url; };
+  setVid((t) => t.name.includes("armbar"), "/videos/demo-bjj.mp4");
+  setVid((t) => t.name === "Triangle", "/videos/demo-bjj.mp4");
+  setVid((t) => t.name.includes("toreando"), "/videos/demo-bjj.mp4");
+  setVid((t) => t.name.includes("Low kick"), "/videos/demo-kick.mp4");
+  setVid((t) => t.name.includes("Middle kick"), "/videos/demo-kick.mp4");
   const members: Member[] = [];
   const subscriptions: Subscription[] = [];
   const installments: Installment[] = [];
@@ -356,6 +363,31 @@ export function buildSeed(): DB {
     });
   });
 
+  // Réservations pour les occurrences à venir (5 prochains jours)
+  const bookings: Booking[] = [];
+  let bkSeq = 0; // compteur global → createdAt strictement croissant (ordre FIFO de la liste d'attente)
+  const bkStamp = () => {
+    const s = bkSeq++;
+    return `${addDays(now, -3)}T${String(8 + Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  };
+  for (let d = 0; d < 5; d++) {
+    const date = addDays(now, d);
+    const jsDow = parseISO(date).getDay();
+    const dowName = (["LUN", "MAR", "MER", "JEU", "VEN", "SAM"] as const)[(jsDow + 6) % 7];
+    if (!dowName) continue;
+    classSessions.filter((c) => c.isActive && c.dayOfWeek === dowName).forEach((cs) => {
+      const eligible = members.filter((m) => (m.status === "actif" || m.status === "gele") && m.disciplineIds.includes(cs.disciplineId));
+      const target = Math.min(eligible.length, Math.round(cs.capacity * (0.5 + rnd() * 0.6))); // 50-110% → parfois liste d'attente
+      const shuffled = [...eligible].sort(() => rnd() - 0.5).slice(0, target);
+      let reservedCount = 0;
+      shuffled.forEach((m, i) => {
+        const status: Booking["status"] = reservedCount < cs.capacity ? "reserve" : "liste_attente";
+        if (status === "reserve") reservedCount++;
+        bookings.push({ id: `bk_${cs.id}_${d}_${i}`, memberId: m.id, classSessionId: cs.id, date, status, createdAt: bkStamp() });
+      });
+    });
+  }
+
   // Familles (fratries) : regroupe des membres partageant le même nom
   const families: Family[] = [];
   const byLast: Record<string, Member[]> = {};
@@ -380,6 +412,6 @@ export function buildSeed(): DB {
     meta: { seedVersion: SEED_VERSION, demoClock: DEMO_CLOCK },
     members, subscriptions, installments, payments, attendance, classSessions,
     plans: PLANS, belts, coaches: COACHES, leads, activity,
-    techniques, sessionInstances, priceExceptions, families, settings,
+    techniques, sessionInstances, priceExceptions, families, bookings, settings,
   };
 }

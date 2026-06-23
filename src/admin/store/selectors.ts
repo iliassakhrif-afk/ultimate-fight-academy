@@ -1,4 +1,4 @@
-import type { DB, Member, DisciplineId, WeekDay, Technique, PriceException, Family, BeltRank } from "../types";
+import type { DB, Member, DisciplineId, WeekDay, Technique, PriceException, Family, BeltRank, ClassSession, Booking } from "../types";
 import { daysBetween, monthKey, addMonths, parseISO } from "./format";
 import { WEEK_DAYS, BELT_CURRICULUM, RAMADAN_EVENING_SHIFT_MIN } from "../constants";
 
@@ -305,6 +305,50 @@ export const ramadanTime = (time: string, ramadan: boolean): string => {
   const total = h * 60 + m + RAMADAN_EVENING_SHIFT_MIN;
   return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 };
+
+// --- Réservations de cours ---
+const DOW_IDX: Record<string, number> = { LUN: 1, MAR: 2, MER: 3, JEU: 4, VEN: 5, SAM: 6 };
+
+export interface Occurrence { classSession: ClassSession; date: string; }
+export const upcomingOccurrences = (db: DB, days = 7): Occurrence[] => {
+  const now = getNow(db);
+  const out: Occurrence[] = [];
+  for (let d = 0; d < days; d++) {
+    const date = addDaysISO(now, d);
+    const jsDow = parseISO(date).getDay(); // 0=dim..6=sam
+    const dow = WEEK_DAYS[(jsDow + 6) % 7]; // LUN..SAM (dimanche → undefined)
+    if (!dow) continue;
+    db.classSessions
+      .filter((c) => c.isActive && c.dayOfWeek === dow && DOW_IDX[c.dayOfWeek])
+      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+      .forEach((classSession) => out.push({ classSession, date }));
+  }
+  return out;
+};
+
+const addDaysISO = (iso: string, n: number): string => {
+  const d = parseISO(iso);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+export const bookingsForOccurrence = (db: DB, classSessionId: string, date: string): Booking[] =>
+  db.bookings
+    .filter((b) => b.classSessionId === classSessionId && b.date === date && b.status !== "annule")
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+
+export interface ReservationState { reserved: number; waitlist: number; capacity: number; spotsLeft: number; }
+export const reservationState = (db: DB, classSessionId: string, date: string): ReservationState => {
+  const cs = db.classSessions.find((c) => c.id === classSessionId);
+  const capacity = cs?.capacity ?? 0;
+  const list = bookingsForOccurrence(db, classSessionId, date);
+  const reserved = list.filter((b) => b.status === "reserve" || b.status === "present").length;
+  const waitlist = list.filter((b) => b.status === "liste_attente").length;
+  return { reserved, waitlist, capacity, spotsLeft: Math.max(0, capacity - reserved) };
+};
+
+export const memberBookings = (db: DB, memberId: string): Booking[] =>
+  db.bookings.filter((b) => b.memberId === memberId && b.status !== "annule").sort((a, b) => a.date.localeCompare(b.date));
 
 // --- Recherche globale ---
 export const searchMembers = (db: DB, q: string): Member[] => {

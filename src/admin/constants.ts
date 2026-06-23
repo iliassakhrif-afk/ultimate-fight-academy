@@ -1,7 +1,7 @@
 import type { DisciplineId, BeltRank, MemberStatus, InstallmentStatus, AppRole } from "./types";
 
 export const DEMO_CLOCK = "2026-06-18";
-export const SEED_VERSION = 5;
+export const SEED_VERSION = 6;
 export const ADMIN_PIN = "1234";
 export const LS_PREFIX = "ufa.admin.v1";
 export const LS_AUTH = "ufa.admin.auth";
@@ -84,6 +84,7 @@ export const NAV_GROUPS: { group: string; items: { label: string; to: string; ic
       { label: "Familles", to: "/admin/familles", icon: "UsersRound" },
       { label: "Présences", to: "/admin/presences", icon: "ClipboardCheck" },
       { label: "Techniques", to: "/admin/techniques", icon: "Dumbbell" },
+      { label: "Vidéothèque", to: "/admin/videotheque", icon: "Film" },
       { label: "Grades & ceintures", to: "/admin/grades", icon: "Award" },
     ],
   },
@@ -99,6 +100,7 @@ export const NAV_GROUPS: { group: string; items: { label: string; to: string; ic
     group: "Salle",
     items: [
       { label: "Planning", to: "/admin/planning", icon: "CalendarDays" },
+      { label: "Réservations", to: "/admin/reservations", icon: "CalendarCheck" },
       { label: "Réglages", to: "/admin/reglages", icon: "Settings" },
     ],
   },

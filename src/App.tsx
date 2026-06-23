@@ -21,6 +21,8 @@ const Settings = lazy(() => import("./admin/pages/Settings"));
 const Prospects = lazy(() => import("./admin/pages/Prospects"));
 const Families = lazy(() => import("./admin/pages/Families"));
 const Portal = lazy(() => import("./admin/pages/Portal"));
+const Reservations = lazy(() => import("./admin/pages/Reservations"));
+const VideoLibrary = lazy(() => import("./admin/pages/VideoLibrary"));
 
 function AdminFallback() {
   return (
@@ -56,6 +58,8 @@ export default function App() {
             <Route path="prospects" element={<Prospects />} />
             <Route path="familles" element={<Families />} />
             <Route path="portail" element={<Portal />} />
+            <Route path="reservations" element={<Reservations />} />
+            <Route path="videotheque" element={<VideoLibrary />} />
             <Route path="reglages" element={<Settings />} />
           </Route>
         </Routes>
