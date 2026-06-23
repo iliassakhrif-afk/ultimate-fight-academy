@@ -18,6 +18,9 @@ const Subscriptions = lazy(() => import("./admin/pages/Subscriptions"));
 const Belts = lazy(() => import("./admin/pages/Belts"));
 const Analytics = lazy(() => import("./admin/pages/Analytics"));
 const Settings = lazy(() => import("./admin/pages/Settings"));
+const Prospects = lazy(() => import("./admin/pages/Prospects"));
+const Families = lazy(() => import("./admin/pages/Families"));
+const Portal = lazy(() => import("./admin/pages/Portal"));
 
 function AdminFallback() {
   return (
@@ -50,6 +53,9 @@ export default function App() {
             <Route path="abonnements" element={<Subscriptions />} />
             <Route path="grades" element={<Belts />} />
             <Route path="statistiques" element={<Analytics />} />
+            <Route path="prospects" element={<Prospects />} />
+            <Route path="familles" element={<Families />} />
+            <Route path="portail" element={<Portal />} />
             <Route path="reglages" element={<Settings />} />
           </Route>
         </Routes>

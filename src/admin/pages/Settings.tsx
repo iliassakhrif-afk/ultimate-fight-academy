@@ -19,11 +19,19 @@ import {
   Lock,
   Check,
   AlertTriangle,
+  Moon,
+  Languages,
+  CalendarClock,
+  Receipt,
+  UserCog,
+  Dumbbell,
+  ClipboardCheck,
 } from "lucide-react";
 import { useStore } from "../store/StoreProvider";
 import { formatNum, formatDateLong } from "../store/format";
-import { DISCIPLINE_LABELS, DISCIPLINE_COLORS } from "../constants";
-import { dbSizeKB, recordCount } from "../store/db";
+import { DISCIPLINE_LABELS, DISCIPLINE_COLORS, ROLE_META } from "../constants";
+import { dbSizeKB, recordCount, roleStore } from "../store/db";
+import type { AppRole, GymSettings } from "../types";
 import Avatar from "../components/Avatar";
 import { Pill } from "../components/StatusBadge";
 import { Modal } from "../components/Overlay";
@@ -34,6 +42,12 @@ const fade = (i: number) => ({
   animate: { opacity: 1, y: 0 },
   transition: { duration: 0.3, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] as const },
 });
+
+const ROLE_ICONS: Record<AppRole, React.ReactNode> = {
+  admin: <ShieldCheck size={18} />,
+  coach: <Dumbbell size={18} />,
+  accueil: <ClipboardCheck size={18} />,
+};
 
 function InfoTile({
   icon,
@@ -103,18 +117,22 @@ function Field({
 }
 
 export default function Settings() {
-  const { db, exportJSON, importJSON, resetDemo } = useStore();
+  const { db, updateSettings, exportJSON, importJSON, resetDemo } = useStore();
   const s = db.settings;
 
-  // Champs d'édition locaux (cosmétiques — démo client-side)
+  // Champs d'édition locaux — persistés réellement via updateSettings au clic.
   const [name, setName] = useState(s.name);
   const [city, setCity] = useState(s.city);
   const [address, setAddress] = useState(s.address);
   const [phone, setPhone] = useState(s.phone);
   const [whatsapp, setWhatsapp] = useState(s.whatsapp);
+  const [receiptFooterText, setReceiptFooterText] = useState(s.receiptFooterText);
   const [pin, setPin] = useState("");
   const [pinSaved, setPinSaved] = useState(false);
   const [identitySaved, setIdentitySaved] = useState(false);
+
+  // Rôle de session (démo) — distinct des réglages persistés de la salle.
+  const [role, setRole] = useState<AppRole>(roleStore.get());
 
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -126,15 +144,24 @@ export default function Settings() {
   };
 
   const saveIdentity = () => {
+    updateSettings({ name, city, address, phone, whatsapp, receiptFooterText });
     setIdentitySaved(true);
     window.setTimeout(() => setIdentitySaved(false), 2000);
   };
 
   const savePin = () => {
     if (pin.length < 4) return;
+    updateSettings({ adminPin: pin });
     setPin("");
     setPinSaved(true);
     window.setTimeout(() => setPinSaved(false), 2000);
+  };
+
+  const setLanguage = (language: GymSettings["language"]) => updateSettings({ language });
+
+  const chooseRole = (r: AppRole) => {
+    roleStore.set(r);
+    setRole(r);
   };
 
   return (
@@ -225,6 +252,15 @@ export default function Settings() {
                 icon={<Coins size={13} />}
                 disabled
               />
+              <div className="sm:col-span-2">
+                <Field
+                  label="Pied de page des reçus"
+                  value={receiptFooterText}
+                  onChange={setReceiptFooterText}
+                  icon={<Receipt size={13} />}
+                  placeholder="Merci de votre confiance…"
+                />
+              </div>
             </div>
             <p className="mt-4 flex items-center gap-1.5 text-xs text-ash">
               <Lock size={12} /> La devise est verrouillée (Dirham marocain — DH).
@@ -270,6 +306,145 @@ export default function Settings() {
           </SectionCard>
         </motion.div>
       </div>
+
+      {/* Préférences salle — Ramadan, langue, horloge démo */}
+      <motion.div {...fade(5.5)}>
+        <SectionCard title="Préférences de la salle">
+          <div className="grid gap-4 lg:grid-cols-3">
+            {/* Mode Ramadan */}
+            <div className="rounded-xl border border-white/10 bg-ink p-4">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gold/15 text-gold">
+                  <Moon size={18} />
+                </span>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium text-bone">Mode Ramadan</p>
+                    <button
+                      role="switch"
+                      aria-checked={s.ramadanMode}
+                      onClick={() => updateSettings({ ramadanMode: !s.ramadanMode })}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                        s.ramadanMode ? "bg-gold" : "bg-white/15"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-bone transition-transform ${
+                          s.ramadanMode ? "translate-x-[22px]" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-ash">
+                    Décale automatiquement les créneaux du soir après la rupture du jeûne.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Langue */}
+            <div className="rounded-xl border border-white/10 bg-ink p-4">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#9b8cff]/15 text-[#9b8cff]">
+                  <Languages size={18} />
+                </span>
+                <div className="flex-1">
+                  <p className="font-medium text-bone">Langue de l'interface</p>
+                  <p className="mt-1 text-xs text-ash">Français ou arabe pour la démo.</p>
+                  <div className="mt-3 flex gap-2">
+                    {(["fr", "ar"] as const).map((lng) => (
+                      <button
+                        key={lng}
+                        onClick={() => setLanguage(lng)}
+                        className={`flex-1 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                          s.language === lng
+                            ? "border-gold/50 bg-gold/15 text-gold"
+                            : "border-white/10 text-ash hover:bg-white/5"
+                        }`}
+                      >
+                        {lng === "fr" ? "Français" : "العربية"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Horloge démo */}
+            <div className="rounded-xl border border-white/10 bg-ink p-4">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-ember/15 text-ember">
+                  <CalendarClock size={18} />
+                </span>
+                <div className="flex-1">
+                  <p className="font-medium text-bone">Horloge démo</p>
+                  <p className="mt-1 text-xs text-ash">
+                    Date « aujourd'hui » utilisée par toute l'app. Idéale pour les démos.
+                  </p>
+                  <input
+                    type="date"
+                    className="field mt-3"
+                    value={s.demoClock}
+                    onChange={(e) => updateSettings({ demoClock: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+      </motion.div>
+
+      {/* Rôle de session */}
+      <motion.div {...fade(5.8)}>
+        <SectionCard
+          title="Rôle de session"
+          action={
+            <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-ash">
+              <UserCog size={13} /> {ROLE_META[role].label}
+            </span>
+          }
+        >
+          <p className="mb-4 text-sm text-ash">
+            Choisissez le rôle de la session de démonstration. Il définit les permissions affichées
+            (encaissements, promotions, configuration) — il est stocké localement dans ce navigateur,
+            indépendamment des données de la salle.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {(Object.keys(ROLE_META) as AppRole[]).map((r) => {
+              const meta = ROLE_META[r];
+              const active = role === r;
+              return (
+                <button
+                  key={r}
+                  onClick={() => chooseRole(r)}
+                  className={`rounded-xl border p-4 text-left transition-colors ${
+                    active
+                      ? "border-ember/50 bg-ember/10"
+                      : "border-white/10 bg-ink hover:bg-white/5"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`grid h-10 w-10 place-items-center rounded-xl ${
+                        active ? "bg-ember/20 text-ember" : "bg-white/5 text-ash"
+                      }`}
+                    >
+                      {ROLE_ICONS[r]}
+                    </span>
+                    {active && <Check size={16} className="text-ember" />}
+                  </div>
+                  <p className="mt-3 font-medium text-bone">{meta.label}</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {meta.canMoney && <Pill label="Encaissements" color="#3ddc84" />}
+                    {meta.canPromote && <Pill label="Promotions" color="#f5b730" />}
+                    {meta.canConfig && <Pill label="Configuration" color="#9b8cff" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </SectionCard>
+      </motion.div>
 
       {/* Staff & coachs */}
       <motion.div {...fade(6)}>

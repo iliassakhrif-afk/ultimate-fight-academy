@@ -1,7 +1,7 @@
 import type {
   DB, Member, Subscription, Installment, Payment, AttendanceRecord, ClassSession,
   MembershipPlan, Belt, Coach, Lead, ActivityLog, GymSettings, DisciplineId, BeltRank,
-  Technique, SessionInstance, PriceException,
+  Technique, SessionInstance, PriceException, Family,
 } from "../types";
 import {
   DEMO_CLOCK, SEED_VERSION, ADMIN_PIN, MA_FIRST_M, MA_FIRST_F, MA_LAST, KENITRA_AREAS,
@@ -356,17 +356,30 @@ export function buildSeed(): DB {
     });
   });
 
+  // Familles (fratries) : regroupe des membres partageant le même nom
+  const families: Family[] = [];
+  const byLast: Record<string, Member[]> = {};
+  members.forEach((m) => { (byLast[m.lastName] ||= []).push(m); });
+  Object.entries(byLast)
+    .filter(([, arr]) => arr.length >= 2)
+    .slice(0, 3)
+    .forEach(([last, arr], i) => {
+      const group = arr.slice(0, 3);
+      families.push({ id: `fam_${i + 1}`, name: `Famille ${last}`, memberIds: group.map((m) => m.id), primaryMemberId: group[0].id });
+    });
+
   const settings: GymSettings = {
     name: "Ultimate Fight Academy", city: "Kénitra", address: "Av. Mohamed V, Kénitra, Maroc",
     phone: "+212 6 12 34 56 78", whatsapp: "+212 6 12 34 56 78", currency: "DH",
     adminPin: ADMIN_PIN, demoClock: DEMO_CLOCK, seedVersion: SEED_VERSION, lastBackupAt: null,
     receiptFooterText: "Merci de votre confiance — Ultimate Fight Academy, Kénitra.",
+    ramadanMode: false, language: "fr",
   };
 
   return {
     meta: { seedVersion: SEED_VERSION, demoClock: DEMO_CLOCK },
     members, subscriptions, installments, payments, attendance, classSessions,
     plans: PLANS, belts, coaches: COACHES, leads, activity,
-    techniques, sessionInstances, priceExceptions, settings,
+    techniques, sessionInstances, priceExceptions, families, settings,
   };
 }

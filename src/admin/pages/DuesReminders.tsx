@@ -9,6 +9,8 @@ import {
   HandCoins,
   Inbox,
   ArrowUpRight,
+  Send,
+  CheckCircle2,
 } from "lucide-react";
 import { useStore } from "../store/StoreProvider";
 import * as S from "../store/selectors";
@@ -44,6 +46,9 @@ export default function DuesReminders() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<TabId>("retard");
   const [collect, setCollect] = useState<{ memberId: string; installmentId: string; amount: number } | null>(null);
+  // Sélection de débiteurs (par memberId) pour la relance groupée WhatsApp.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [queueOpen, setQueueOpen] = useState(false);
 
   const impayes = S.impayesTotauxDH(db);
   const enRetard = S.membresEnRetard(db);
@@ -83,6 +88,43 @@ export default function DuesReminders() {
       .slice(0, 5);
   }, [enRetard, db]);
   const maxBalance = Math.max(...topDebiteurs.map((d) => d.balance), 1);
+
+  // File de relance groupée: un membre = montant restant cumulé sur ses échéances impayées de l'onglet courant.
+  const queue = useMemo(() => {
+    const byMember = new Map<string, number>();
+    for (const inst of rows) {
+      byMember.set(inst.memberId, (byMember.get(inst.memberId) ?? 0) + inst.remaining);
+    }
+    return Array.from(byMember.entries())
+      .filter(([id]) => selected.has(id))
+      .map(([id, amount]) => ({ member: memberById.get(id), amount }))
+      .filter((q): q is { member: Member; amount: number } => Boolean(q.member))
+      .sort((a, b) => b.amount - a.amount);
+  }, [rows, selected, memberById]);
+
+  function toggleSelect(memberId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
+  }
+
+  // memberIds distincts de l'onglet courant (pour "tout sélectionner").
+  const rowMemberIds = useMemo(() => Array.from(new Set(rows.map((r) => r.memberId))), [rows]);
+  const allSelected = rowMemberIds.length > 0 && rowMemberIds.every((id) => selected.has(id));
+
+  function toggleAll() {
+    setSelected((prev) => {
+      if (allSelected) {
+        const next = new Set(prev);
+        rowMemberIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...rowMemberIds]);
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -161,25 +203,48 @@ export default function DuesReminders() {
       <SectionCard
         title="File de relances"
         action={
-          <div className="flex gap-1 rounded-xl border border-white/10 bg-ink p-1">
-            {TABS.map((t) => {
-              const count = t.id === "retard" ? open.length : t.id === "bientot" ? bientot.length : tousImpayes.length;
-              const active = tab === t.id;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    active ? "bg-steel text-bone" : "text-ash hover:text-bone"
-                  }`}
-                >
-                  {t.label}
-                  <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] ${active ? "bg-ember/20 text-ember" : "bg-white/5 text-ash"}`}>
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Sélection groupée */}
+            <button
+              onClick={toggleAll}
+              disabled={rowMemberIds.length === 0}
+              className="rounded-lg border border-white/10 bg-ink px-3 py-1.5 text-xs font-semibold text-ash transition-colors hover:text-bone disabled:opacity-40"
+            >
+              {allSelected ? "Tout désélectionner" : "Tout sélectionner"}
+            </button>
+            <button
+              onClick={() => setQueueOpen(true)}
+              disabled={selected.size === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#25D366]/15 px-3 py-1.5 text-xs font-semibold text-[#25D366] transition-colors hover:bg-[#25D366]/25 disabled:opacity-40"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Relancer la sélection
+              {selected.size > 0 && (
+                <span className="rounded-full bg-[#25D366]/25 px-1.5 py-0.5 text-[10px]">{selected.size}</span>
+              )}
+            </button>
+
+            {/* Onglets */}
+            <div className="flex gap-1 rounded-xl border border-white/10 bg-ink p-1">
+              {TABS.map((t) => {
+                const count = t.id === "retard" ? open.length : t.id === "bientot" ? bientot.length : tousImpayes.length;
+                const active = tab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      active ? "bg-steel text-bone" : "text-ash hover:text-bone"
+                    }`}
+                  >
+                    {t.label}
+                    <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] ${active ? "bg-ember/20 text-ember" : "bg-white/5 text-ash"}`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         }
       >
@@ -200,6 +265,8 @@ export default function DuesReminders() {
                   inst={inst}
                   member={member}
                   index={i}
+                  checked={selected.has(member.id)}
+                  onToggle={() => toggleSelect(member.id)}
                   onOpen={() => navigate(`/admin/membres/${member.id}`)}
                   onCollect={() => setCollect({ memberId: member.id, installmentId: inst.id, amount: inst.remaining })}
                 />
@@ -216,6 +283,8 @@ export default function DuesReminders() {
         installmentId={collect?.installmentId ?? null}
         defaultAmount={collect?.amount}
       />
+
+      <BulkReminderQueue open={queueOpen} onClose={() => setQueueOpen(false)} queue={queue} />
     </div>
   );
 }
@@ -224,12 +293,16 @@ function DueRow({
   inst,
   member,
   index,
+  checked,
+  onToggle,
   onOpen,
   onCollect,
 }: {
   inst: OpenInstallment;
   member: Member;
   index: number;
+  checked: boolean;
+  onToggle: () => void;
   onOpen: () => void;
   onCollect: () => void;
 }) {
@@ -239,9 +312,21 @@ function DueRow({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.03, 0.3) }}
-      className="flex flex-col gap-3 rounded-xl border border-white/10 bg-ink/60 p-3 transition-colors hover:border-white/20 sm:flex-row sm:items-center"
+      className={`flex flex-col gap-3 rounded-xl border bg-ink/60 p-3 transition-colors sm:flex-row sm:items-center ${
+        checked ? "border-[#25D366]/40" : "border-white/10 hover:border-white/20"
+      }`}
       style={{ borderLeft: `3px solid ${meta.color}` }}
     >
+      {/* Sélection relance groupée */}
+      <label className="flex cursor-pointer items-center" title="Sélectionner pour relance groupée">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggle}
+          className="h-4 w-4 cursor-pointer accent-[#25D366]"
+        />
+      </label>
+
       {/* Membre */}
       <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
         <Avatar first={member.firstName} last={member.lastName} size={40} />
@@ -321,5 +406,101 @@ function DebtorRow({
         </div>
       </button>
     </motion.li>
+  );
+}
+
+// File de relance groupée WhatsApp + journal: chaque ligne réutilise WhatsAppReminder
+// (compact) et, à l'ouverture du lien wa.me, journalise via logReminder('paiement').
+function BulkReminderQueue({
+  open,
+  onClose,
+  queue,
+}: {
+  open: boolean;
+  onClose: () => void;
+  queue: { member: Member; amount: number }[];
+}) {
+  const { logReminder } = useStore();
+  const [sent, setSent] = useState<Set<string>>(new Set());
+
+  // Réinitialise le journal à chaque réouverture pour repartir d'une file propre.
+  function handleClose() {
+    setSent(new Set());
+    onClose();
+  }
+
+  function markSent(member: Member, amount: number) {
+    if (sent.has(member.id)) return;
+    logReminder(member.id, "paiement", amount);
+    setSent((prev) => new Set(prev).add(member.id));
+  }
+
+  const total = queue.reduce((sum, q) => sum + q.amount, 0);
+  const prepared = sent.size;
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" onClick={handleClose}>
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-coal sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-white/10 p-5">
+          <div>
+            <h2 className="font-display text-2xl tracking-wide text-bone">RELANCE GROUPÉE</h2>
+            <p className="text-sm text-ash">
+              {queue.length} débiteur{queue.length > 1 ? "s" : ""} · {formatDH(total)} à recouvrer
+            </p>
+          </div>
+          <button onClick={handleClose} className="rounded-lg px-2 py-1 text-ash transition-colors hover:text-bone">
+            Fermer
+          </button>
+        </div>
+
+        {/* Compteur de relances préparées */}
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-ink/40 px-5 py-3">
+          <span className="inline-flex items-center gap-2 text-sm text-ash">
+            <CheckCircle2 className="h-4 w-4 text-[#25D366]" />
+            <span className="font-semibold text-bone">{prepared}</span> relance{prepared > 1 ? "s" : ""} préparée{prepared > 1 ? "s" : ""}
+          </span>
+          <span className="text-xs uppercase tracking-wider text-ash">sur {queue.length}</span>
+        </div>
+
+        <ul className="flex-1 space-y-2 overflow-y-auto p-5">
+          {queue.map((q) => {
+            const done = sent.has(q.member.id);
+            return (
+              <li
+                key={q.member.id}
+                className={`flex items-center gap-3 rounded-xl border bg-ink/60 p-3 transition-colors ${
+                  done ? "border-[#25D366]/40" : "border-white/10"
+                }`}
+              >
+                <Avatar first={q.member.firstName} last={q.member.lastName} size={36} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold text-bone">
+                    {q.member.firstName} {q.member.lastName}
+                  </p>
+                  <p className="truncate text-xs text-ash">{q.member.phone || "Pas de téléphone"}</p>
+                </div>
+                <span className="shrink-0 font-display text-base text-ember">{formatDH(q.amount)}</span>
+                {done ? (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#25D366]/15 px-2.5 py-1 text-xs font-semibold text-[#25D366]">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Envoyée
+                  </span>
+                ) : (
+                  <span className="shrink-0">
+                    <WhatsAppReminder member={q.member} type="paiement" amount={q.amount} compact onSend={() => markSent(q.member, q.amount)} />
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </motion.div>
+    </div>
   );
 }

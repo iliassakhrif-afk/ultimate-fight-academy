@@ -23,7 +23,7 @@ import { formatDH, ageFrom, addMonths, formatDateFR } from "../store/format";
 import { DISCIPLINE_LABELS, DISCIPLINE_COLORS, DISCIPLINE_SHORT } from "../constants";
 import { SectionCard } from "../components/EmptyState";
 import { Pill } from "../components/StatusBadge";
-import type { DisciplineId, PayMethod, MembershipPlan } from "../types";
+import type { DisciplineId, PayMethod, MembershipPlan, PlanId } from "../types";
 
 type Duration = "6 mois" | "1 an";
 type PayMode = "comptant" | "echelonne";
@@ -50,7 +50,7 @@ const rise = {
 };
 
 export default function MemberWizard() {
-  const { db, now, addMember, collectPayment } = useStore();
+  const { db, now, addMember, collectPayment, createSubscription } = useStore();
   const navigate = useNavigate();
 
   const [step, setStep] = useState(1);
@@ -93,20 +93,20 @@ export default function MemberWizard() {
   const basePrice = plan ? (duration === "1 an" ? plan.price12mDH : plan.price6mDH) : 0;
   const regFee = plan?.registrationFeeDH ?? 0;
   const yearlyBonus = duration === "1 an"; // frais d'inscription offerts + 2 mois offerts
-  const total = basePrice + (yearlyBonus ? 0 : regFee);
+  // Frais d'inscription INCLUS dans le prix affiché (convention du catalogue) → total = prix de la formule.
+  const total = basePrice;
 
-  // Échéancier (aperçu — non persisté en base)
+  // Échéancier (aperçu) — MÊME répartition que buildSubscription (reste sur la DERNIÈRE échéance)
   const schedule = useMemo(() => {
     if (payMode === "comptant") {
       return [{ label: "Paiement comptant", dueDate: now, amount: total }];
     }
     const n = installmentsCount;
-    const part = Math.floor(total / n);
-    const rest = total - part * n;
+    const per = Math.round(total / n);
     return Array.from({ length: n }, (_, i) => ({
       label: `Versement ${i + 1}/${n}`,
       dueDate: addMonths(now, i * (duration === "1 an" ? 4 : 2)),
-      amount: i === 0 ? part + rest : part,
+      amount: i === n - 1 ? total - per * (n - 1) : per,
     }));
   }, [payMode, installmentsCount, total, now, duration]);
 
@@ -159,9 +159,17 @@ export default function MemberWizard() {
       preferredPaymentMethod: payMethod,
       acquisitionSource: "walkin",
     });
+    // Crée le vrai abonnement + échéancier, puis encaisse le 1er versement dessus
+    const { firstInstallmentId } = createSubscription(member.id, {
+      planId: planId as PlanId,
+      duration,
+      disciplineIds,
+      paymentMode: payMode === "comptant" ? "comptant" : "echelonne",
+      installmentsCount: payMode === "comptant" ? 1 : installmentsCount,
+    });
     collectPayment({
       memberId: member.id,
-      installmentId: null,
+      installmentId: firstInstallmentId,
       amount: effFirst,
       method: payMethod,
       type: "inscription",

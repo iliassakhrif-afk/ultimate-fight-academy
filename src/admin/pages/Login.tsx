@@ -2,17 +2,22 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Flame, ArrowRight, ArrowLeft } from "lucide-react";
-import { auth } from "../store/db";
-import { ADMIN_PIN } from "../constants";
+import { auth, roleStore } from "../store/db";
+import { ADMIN_PIN, ROLE_META } from "../constants";
 import { asset } from "../../asset";
+
+type Role = "admin" | "coach" | "accueil";
+
+const ROLES = Object.keys(ROLE_META) as Role[];
 
 export default function Login() {
   const nav = useNavigate();
   const [pin, setPin] = useState("");
+  const [role, setRole] = useState<Role>("admin");
   const [error, setError] = useState(false);
 
   const submit = (value: string) => {
-    if (auth.login(value, ADMIN_PIN)) nav("/admin");
+    if (auth.login(value, ADMIN_PIN)) { roleStore.set(role); nav("/admin"); }
     else { setError(true); setPin(""); }
   };
 
@@ -29,6 +34,24 @@ export default function Login() {
           <img src={asset("/images/logo.png")} alt="UFA" className="mb-3 h-16 w-16 object-contain" />
           <h1 className="font-display text-2xl tracking-wide">ESPACE ADMIN</h1>
           <p className="mt-1 text-sm text-ash">Ultimate Fight Academy · Kénitra</p>
+        </div>
+
+        <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-ash">Rôle</label>
+        <div className="mb-5 grid grid-cols-3 gap-2">
+          {ROLES.map((r) => {
+            const meta = ROLE_META[r];
+            const active = role === r;
+            return (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRole(r)}
+                className={`rounded-xl border px-2 py-2.5 text-center text-xs font-bold uppercase tracking-wider transition-colors ${active ? "border-ember bg-ember/15 text-bone" : "border-white/10 text-ash hover:border-white/25 hover:text-bone"}`}
+              >
+                {meta.label}
+              </button>
+            );
+          })}
         </div>
 
         <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-ash">Code PIN</label>

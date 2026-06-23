@@ -1,6 +1,6 @@
-import type { DB, Member, DisciplineId, WeekDay, Technique, PriceException } from "../types";
+import type { DB, Member, DisciplineId, WeekDay, Technique, PriceException, Family, BeltRank } from "../types";
 import { daysBetween, monthKey, addMonths, parseISO } from "./format";
-import { WEEK_DAYS } from "../constants";
+import { WEEK_DAYS, BELT_CURRICULUM, RAMADAN_EVENING_SHIFT_MIN } from "../constants";
 
 export const getNow = (db: DB): string => db.settings.demoClock;
 
@@ -265,6 +265,45 @@ export const effectivePrice = (db: DB, base: number, memberId: string): Effectiv
   else price = exc.value; // override
   price = Math.max(0, Math.round(price));
   return { base, price, discount: Math.max(0, base - price), label: exc.label };
+};
+
+// --- Curriculum technique → progression de grade ---
+export interface CurriculumProgress {
+  currentRank: BeltRank | null;
+  nextRank: BeltRank | null;
+  practiced: number;
+  target: number;
+  pct: number;
+  focus: string[];
+}
+export const curriculumProgress = (db: DB, memberId: string, discipline: DisciplineId = "bjj"): CurriculumProgress => {
+  const belt = db.belts.find((b) => b.memberId === memberId && b.isCurrent && b.discipline === discipline);
+  const currentRank = belt?.beltRank ?? "blanche";
+  const entry = BELT_CURRICULUM.find((c) => c.from === currentRank);
+  const practiced = memberTechniques(db, memberId).filter((t) => t.technique.discipline === discipline).length;
+  if (!entry) return { currentRank, nextRank: null, practiced, target: practiced, pct: 100, focus: [] };
+  const pct = Math.min(100, Math.round((practiced / entry.target) * 100));
+  return { currentRank, nextRank: entry.to, practiced, target: entry.target, pct, focus: entry.focus };
+};
+
+// --- Familles ---
+export const familyOf = (db: DB, memberId: string): Family | null =>
+  db.families.find((f) => f.memberIds.includes(memberId)) || null;
+export const familyMembers = (db: DB, familyId: string): Member[] => {
+  const fam = db.families.find((f) => f.id === familyId);
+  if (!fam) return [];
+  return fam.memberIds.map((id) => db.members.find((m) => m.id === id)).filter((m): m is Member => !!m);
+};
+export const familyBalanceDH = (db: DB, familyId: string): number =>
+  familyMembers(db, familyId).reduce((s, m) => s + memberBalanceDH(db, m.id), 0);
+
+// --- Ramadan : décalage des créneaux du soir ---
+export const ramadanTime = (time: string, ramadan: boolean): string => {
+  if (!ramadan) return time;
+  const [h, m] = time.split(":").map(Number);
+  if (h < 17) return time;
+  const total = h * 60 + m + RAMADAN_EVENING_SHIFT_MIN;
+  return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 };
 
 // --- Recherche globale ---

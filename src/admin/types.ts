@@ -185,6 +185,15 @@ export interface ActivityLog {
   amountDH: number | null;
 }
 
+export interface Family {
+  id: string;
+  name: string; // "Famille El Amrani"
+  memberIds: string[];
+  primaryMemberId: string | null; // le payeur/responsable
+}
+
+export type AppRole = "admin" | "coach" | "accueil";
+
 export interface GymSettings {
   name: string;
   city: string;
@@ -197,6 +206,8 @@ export interface GymSettings {
   seedVersion: number;
   lastBackupAt: string | null;
   receiptFooterText: string;
+  ramadanMode: boolean;
+  language: "fr" | "ar";
 }
 
 // Techniques & contenu de séance
@@ -251,10 +262,11 @@ export interface DB {
   techniques: Technique[];
   sessionInstances: SessionInstance[];
   priceExceptions: PriceException[];
+  families: Family[];
   settings: GymSettings;
 }
 
 export type Collection =
   | "members" | "subscriptions" | "installments" | "payments" | "attendance"
   | "classSessions" | "plans" | "belts" | "coaches" | "leads" | "activity"
-  | "techniques" | "sessionInstances" | "priceExceptions";
+  | "techniques" | "sessionInstances" | "priceExceptions" | "families";

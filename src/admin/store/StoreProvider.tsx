@@ -1,7 +1,9 @@
 import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
-import type { DB, Member, PayMethod, DisciplineId, BeltRank, AttendanceRecord, MembershipPlan, Technique, PriceException, PlanId } from "../types";
+import type { DB, Member, PayMethod, DisciplineId, BeltRank, AttendanceRecord, MembershipPlan, Technique, PriceException, PlanId, Subscription, Installment, Duration, GymSettings, Lead } from "../types";
 import { loadDB, saveDB, resetDB as resetDBFile, exportDB, importDB } from "./db";
-import { getNow, memberBalanceDH } from "./selectors";
+import { getNow, memberBalanceDH, effectivePrice } from "./selectors";
+import { addMonths } from "./format";
+import { TEMPLATES } from "../components/WhatsAppReminder";
 
 interface CollectArgs {
   memberId: string;
@@ -28,6 +30,22 @@ interface StoreCtx {
   updatePlan: (planId: PlanId, patch: Partial<MembershipPlan>) => void;
   addPriceException: (memberId: string, e: Omit<PriceException, "id" | "memberId" | "active" | "createdAt">) => void;
   removePriceException: (id: string) => void;
+  createSubscription: (memberId: string, opts: { planId: PlanId; duration: Duration; disciplineIds: DisciplineId[]; paymentMode: "comptant" | "echelonne"; installmentsCount: number; startDate?: string }) => { subscription: Subscription; firstInstallmentId: string | null };
+  renewSubscription: (subscriptionId: string) => void;
+  freezeSubscription: (subscriptionId: string) => void;
+  cancelSubscription: (subscriptionId: string) => void;
+  markAttendance: (memberId: string, classSessionId: string, status: "present" | "no_show" | "excuse") => void;
+  removeAttendance: (attendanceId: string) => void;
+  convertLead: (leadId: string) => Member | null;
+  updateLead: (id: string, patch: Partial<Lead>) => void;
+  addLead: (l: Partial<Lead>) => void;
+  logReminder: (memberId: string, type: keyof typeof TEMPLATES, amount?: number) => void;
+  createFamily: (name: string, memberIds: string[]) => void;
+  setFamilyMembers: (familyId: string, memberIds: string[], primaryMemberId: string | null) => void;
+  updateSettings: (patch: Partial<GymSettings>) => void;
+  addClassSession: (c: Partial<import("../types").ClassSession>) => void;
+  updateClassSession: (id: string, patch: Partial<import("../types").ClassSession>) => void;
+  removeClassSession: (id: string) => void;
   resetDemo: () => void;
   exportJSON: () => void;
   importJSON: (file: File) => Promise<void>;
@@ -242,6 +260,166 @@ export function AdminStoreProvider({ children }: { children: ReactNode }) {
     mutate((prev) => ({ ...prev, priceExceptions: prev.priceExceptions.filter((x) => x.id !== id) }));
   }, [mutate]);
 
+  // --- Abonnements ---
+  const buildSubscription = (prev: DB, memberId: string, opts: { planId: PlanId; duration: Duration; disciplineIds: DisciplineId[]; paymentMode: "comptant" | "echelonne"; installmentsCount: number; startDate?: string }) => {
+    const now = getNow(prev);
+    const plan = prev.plans.find((p) => p.id === opts.planId);
+    const base = !plan ? 0 : opts.duration === "1 an" ? plan.price12mDH : plan.price6mDH;
+    const total = effectivePrice(prev, base, memberId).price;
+    const months = opts.duration === "1 an" ? 14 : 6; // +2 mois offerts en annuel
+    const startDate = opts.startDate || now;
+    const endDate = addMonths(startDate, months);
+    const subId = uid("s");
+    const sub: Subscription = {
+      id: subId, memberId, planId: opts.planId, duration: opts.duration, disciplineIds: opts.disciplineIds,
+      startDate, endDate, basePriceDH: base, registrationFeeDH: 0,
+      discountLabel: opts.duration === "1 an" ? "2 mois offerts" : "Frais d'inscription inclus", discountDH: Math.max(0, base - total),
+      totalDH: total, status: "actif", paymentMode: opts.paymentMode, installmentsCount: Math.max(1, opts.installmentsCount), createdAt: now,
+    };
+    const nInst = sub.installmentsCount;
+    const per = Math.round(total / nInst);
+    const installments: Installment[] = [];
+    for (let k = 0; k < nInst; k++) {
+      const amount = k === nInst - 1 ? total - per * (nInst - 1) : per;
+      installments.push({
+        id: uid("i"), subscriptionId: subId, memberId, sequence: k + 1,
+        label: nInst > 1 ? (k === 0 ? "Acompte" : `${k + 1}e versement`) : "Paiement intégral",
+        dueDate: addMonths(startDate, k), amountDueDH: amount, amountPaidDH: 0, status: k === 0 ? "en_attente" : "en_attente",
+      });
+    }
+    return { sub, installments };
+  };
+
+  const createSubscription = useCallback(
+    (memberId: string, opts: { planId: PlanId; duration: Duration; disciplineIds: DisciplineId[]; paymentMode: "comptant" | "echelonne"; installmentsCount: number; startDate?: string }) => {
+      const built = buildSubscription(db, memberId, opts);
+      mutate((prev) => {
+        const now = getNow(prev);
+        const members = prev.members.map((m) => (m.id === memberId ? { ...m, status: m.status === "prospect" || m.status === "essai" ? "actif" : m.status, disciplineIds: opts.disciplineIds.length ? opts.disciplineIds : m.disciplineIds, updatedAt: now } : m));
+        return { ...prev, subscriptions: [built.sub, ...prev.subscriptions], installments: [...built.installments, ...prev.installments], members };
+      });
+      return { subscription: built.sub, firstInstallmentId: built.installments[0]?.id ?? null };
+    },
+    [db, mutate]
+  );
+
+  const renewSubscription = useCallback((subscriptionId: string) => {
+    mutate((prev) => {
+      const old = prev.subscriptions.find((s) => s.id === subscriptionId);
+      if (!old) return prev;
+      const built = buildSubscription({ ...prev }, old.memberId, { planId: old.planId, duration: old.duration, disciplineIds: old.disciplineIds, paymentMode: old.paymentMode, installmentsCount: old.installmentsCount, startDate: getNow(prev) });
+      const subscriptions = prev.subscriptions.map((s) => (s.id === subscriptionId ? { ...s, status: "expire" as const } : s));
+      const members = prev.members.map((m) => (m.id === old.memberId ? { ...m, status: "actif" as Member["status"] } : m));
+      const activity = [{ id: uid("act"), type: "renouvellement" as const, memberId: old.memberId, timestamp: getNow(prev) + "T10:00:00", summaryFR: `Abonnement renouvelé`, amountDH: built.sub.totalDH }, ...prev.activity];
+      return { ...prev, subscriptions: [built.sub, ...subscriptions], installments: [...built.installments, ...prev.installments], members, activity };
+    });
+  }, [mutate]);
+
+  const freezeSubscription = useCallback((subscriptionId: string) => {
+    mutate((prev) => ({ ...prev, subscriptions: prev.subscriptions.map((s) => (s.id === subscriptionId ? { ...s, status: (s.status === "gele" ? "actif" : "gele") as typeof s.status } : s)) }));
+  }, [mutate]);
+
+  const cancelSubscription = useCallback((subscriptionId: string) => {
+    mutate((prev) => ({ ...prev, subscriptions: prev.subscriptions.map((s) => (s.id === subscriptionId ? { ...s, status: "annule" as const } : s)) }));
+  }, [mutate]);
+
+  // --- Présences (no-show / excuse / correction) ---
+  const markAttendance = useCallback((memberId: string, classSessionId: string, status: "present" | "no_show" | "excuse") => {
+    const time = new Date().toTimeString().slice(0, 5);
+    mutate((prev) => {
+      const now = getNow(prev);
+      const cs = prev.classSessions.find((c) => c.id === classSessionId);
+      if (!cs) return prev;
+      let attendance = [...prev.attendance];
+      const existing = attendance.find((a) => a.memberId === memberId && a.classSessionId === classSessionId && a.date === now);
+      if (existing) {
+        attendance = attendance.map((a) => (a.id === existing.id ? { ...a, status } : a));
+      } else {
+        const member = prev.members.find((m) => m.id === memberId);
+        const sub = prev.subscriptions.filter((s) => s.memberId === memberId).sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+        const rec: AttendanceRecord = {
+          id: uid("a"), memberId, classSessionId, disciplineId: cs.disciplineId, date: now, checkInTime: time, method: "manuel", status,
+          flaggedExpiredSub: sub ? sub.endDate < now : false, flaggedDueBalance: memberBalanceDH(prev, memberId) > 0,
+          flaggedMedicalExpired: member?.medicalCertExpiry ? member.medicalCertExpiry < now : false,
+        };
+        attendance = [rec, ...attendance];
+      }
+      // recalcule lastAttendanceAt = dernière présence réelle (évite une présence "fantôme" après no-show/excusé)
+      const lastPresent = attendance.filter((a) => a.memberId === memberId && a.status === "present").reduce<string | null>((m, a) => (m && m > a.date ? m : a.date), null);
+      const members = prev.members.map((m) => (m.id === memberId ? { ...m, lastAttendanceAt: lastPresent } : m));
+      return { ...prev, attendance, members };
+    });
+  }, [mutate]);
+
+  const removeAttendance = useCallback((attendanceId: string) => {
+    mutate((prev) => {
+      const rec = prev.attendance.find((a) => a.id === attendanceId);
+      const attendance = prev.attendance.filter((a) => a.id !== attendanceId);
+      if (!rec) return { ...prev, attendance };
+      const lastPresent = attendance.filter((a) => a.memberId === rec.memberId && a.status === "present").reduce<string | null>((m, a) => (m && m > a.date ? m : a.date), null);
+      const members = prev.members.map((m) => (m.id === rec.memberId ? { ...m, lastAttendanceAt: lastPresent } : m));
+      return { ...prev, attendance, members };
+    });
+  }, [mutate]);
+
+  // --- Leads / CRM ---
+  const addLead = useCallback((l: Partial<Lead>) => {
+    mutate((prev) => ({ ...prev, leads: [{ id: uid("l"), firstName: l.firstName || "Prospect", lastName: l.lastName || "", phone: l.phone || "", source: l.source || "walkin" as Lead["source"], interestedDisciplineIds: l.interestedDisciplineIds || [], stage: l.stage || "nouveau", heatScore: l.heatScore || "tiede", trialDate: l.trialDate || null, createdAt: getNow(prev) }, ...prev.leads] }));
+  }, [mutate]);
+
+  const updateLead = useCallback((id: string, patch: Partial<Lead>) => {
+    mutate((prev) => ({ ...prev, leads: prev.leads.map((l) => (l.id === id ? { ...l, ...patch } : l)) }));
+  }, [mutate]);
+
+  const convertLead = useCallback((leadId: string): Member | null => {
+    const lead = db.leads.find((l) => l.id === leadId);
+    if (!lead) return null;
+    const created = addMember({ firstName: lead.firstName, lastName: lead.lastName, phone: lead.phone, disciplineIds: lead.interestedDisciplineIds, status: "essai", acquisitionSource: lead.source as Member["acquisitionSource"] });
+    mutate((prev) => ({ ...prev, leads: prev.leads.map((l) => (l.id === leadId ? { ...l, stage: "inscrit" as const } : l)) }));
+    return created;
+  }, [db, addMember, mutate]);
+
+  // --- Relances (journal) ---
+  const logReminder = useCallback((memberId: string, type: keyof typeof TEMPLATES, amount?: number) => {
+    const stamp = new Date().toTimeString().slice(0, 8);
+    mutate((prev) => {
+      const m = prev.members.find((x) => x.id === memberId);
+      if (!m) return prev;
+      const activity = [{ id: uid("act"), type: "relance" as const, memberId, timestamp: getNow(prev) + "T" + stamp, summaryFR: `Relance ${type} — ${m.firstName} ${m.lastName}`, amountDH: amount ?? null }, ...prev.activity];
+      return { ...prev, activity };
+    });
+  }, [mutate]);
+
+  // --- Familles ---
+  const createFamily = useCallback((name: string, memberIds: string[]) => {
+    mutate((prev) => ({ ...prev, families: [{ id: uid("fam"), name, memberIds, primaryMemberId: memberIds[0] ?? null }, ...prev.families] }));
+  }, [mutate]);
+
+  const setFamilyMembers = useCallback((familyId: string, memberIds: string[], primaryMemberId: string | null) => {
+    mutate((prev) => ({ ...prev, families: prev.families.map((f) => (f.id === familyId ? { ...f, memberIds, primaryMemberId } : f)) }));
+  }, [mutate]);
+
+  const updateSettings = useCallback((patch: Partial<GymSettings>) => {
+    mutate((prev) => ({ ...prev, settings: { ...prev.settings, ...patch } }));
+  }, [mutate]);
+
+  // --- Planning (créneaux) ---
+  const addClassSession = useCallback((c: Partial<import("../types").ClassSession>) => {
+    mutate((prev) => ({ ...prev, classSessions: [...prev.classSessions, {
+      id: uid("cs"), disciplineId: c.disciplineId || "bjj", label: c.label || "Nouveau cours", level: c.level || "adultes",
+      variant: c.variant ?? null, dayOfWeek: c.dayOfWeek || "LUN", startTime: c.startTime || "18:00", endTime: c.endTime || "19:00",
+      coachId: c.coachId || prev.coaches[0]?.id || "c_rachidi", room: c.room || "Tatami 1", capacity: c.capacity ?? 20, isActive: c.isActive ?? true,
+    }] }));
+  }, [mutate]);
+
+  const updateClassSession = useCallback((id: string, patch: Partial<import("../types").ClassSession>) => {
+    mutate((prev) => ({ ...prev, classSessions: prev.classSessions.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
+  }, [mutate]);
+
+  const removeClassSession = useCallback((id: string) => {
+    mutate((prev) => ({ ...prev, classSessions: prev.classSessions.filter((c) => c.id !== id) }));
+  }, [mutate]);
+
   const resetDemo = useCallback(() => { const next = resetDBFile(); setDb({ ...next }); }, []);
   const exportJSON = useCallback(() => {
     exportDB(db);
@@ -251,8 +429,8 @@ export function AdminStoreProvider({ children }: { children: ReactNode }) {
   const saveBackup = useCallback(() => exportJSON(), [exportJSON]);
 
   const value = useMemo<StoreCtx>(
-    () => ({ db, now: getNow(db), refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, resetDemo, exportJSON, importJSON, saveBackup }),
-    [db, refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, resetDemo, exportJSON, importJSON, saveBackup]
+    () => ({ db, now: getNow(db), refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, createSubscription, renewSubscription, freezeSubscription, cancelSubscription, markAttendance, removeAttendance, convertLead, updateLead, addLead, logReminder, createFamily, setFamilyMembers, updateSettings, addClassSession, updateClassSession, removeClassSession, resetDemo, exportJSON, importJSON, saveBackup }),
+    [db, refresh, collectPayment, checkIn, promote, addMember, updateMember, freezeMember, addTechnique, removeTechnique, setSessionTechniques, updatePlan, addPriceException, removePriceException, createSubscription, renewSubscription, freezeSubscription, cancelSubscription, markAttendance, removeAttendance, convertLead, updateLead, addLead, logReminder, createFamily, setFamilyMembers, updateSettings, addClassSession, updateClassSession, removeClassSession, resetDemo, exportJSON, importJSON, saveBackup]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -12,6 +12,8 @@ import {
   Layers,
   ArrowRight,
   Pencil,
+  Snowflake,
+  XCircle,
 } from "lucide-react";
 import { Modal } from "../components/Overlay";
 import { useStore } from "../store/StoreProvider";
@@ -50,12 +52,15 @@ const BUCKETS = [
 ] as const;
 
 export default function Subscriptions() {
-  const { db } = useStore();
+  const { db, renewSubscription, freezeSubscription, cancelSubscription, logReminder } = useStore();
   const navigate = useNavigate();
   const now = S.getNow(db);
 
   const memberById = useMemo(() => new Map(db.members.map((m) => [m.id, m])), [db.members]);
   const planById = useMemo(() => new Map(db.plans.map((p) => [p.id, p])), [db.plans]);
+
+  // Confirmation de résiliation
+  const [cancelTarget, setCancelTarget] = useState<{ sub: Subscription; member: Member | undefined } | null>(null);
 
   // --- KPIs ---
   const abosActifs = useMemo(() => db.subscriptions.filter((s) => s.status === "actif").length, [db.subscriptions]);
@@ -204,6 +209,46 @@ export default function Subscriptions() {
       sortValue: (s) => s.status,
       render: (s) => <Pill label={SUB_STATUS_META[s.status].label} color={SUB_STATUS_META[s.status].color} />,
     },
+    {
+      key: "actions",
+      header: "Actions",
+      width: "150px",
+      align: "right",
+      render: (s) => {
+        const m = memberById.get(s.memberId);
+        const canFreeze = s.status === "actif" || s.status === "expire_bientot";
+        return (
+          <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => renewSubscription(s.id)}
+              title="Renouveler"
+              className="grid h-7 w-7 place-items-center rounded-lg border border-white/10 text-ash transition-colors hover:border-white/30"
+              onMouseEnter={(e) => (e.currentTarget.style.color = "#3ddc84")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "")}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => freezeSubscription(s.id)}
+              disabled={!canFreeze}
+              title={canFreeze ? "Geler" : "Indisponible"}
+              className="grid h-7 w-7 place-items-center rounded-lg border border-white/10 text-ash transition-colors enabled:hover:border-white/30 disabled:opacity-30"
+              onMouseEnter={(e) => { if (canFreeze) e.currentTarget.style.color = "#3aa0ff"; }}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "")}
+            >
+              <Snowflake className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setCancelTarget({ sub: s, member: m })}
+              title="Résilier"
+              className="grid h-7 w-7 place-items-center rounded-lg border border-white/10 text-ash transition-colors hover:border-ember/40 hover:text-ember"
+            >
+              <XCircle className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        );
+      },
+    },
   ];
 
   return (
@@ -316,7 +361,18 @@ export default function Subscriptions() {
                               </div>
                             </div>
                           </button>
-                          <WhatsAppReminder member={member} type="expiration" dueDate={sub.endDate} compact />
+                          <button
+                            onClick={() => renewSubscription(sub.id)}
+                            title="Renouveler l'abonnement"
+                            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-white/10 text-ash transition-colors hover:border-white/30"
+                            onMouseEnter={(e) => (e.currentTarget.style.color = "#3ddc84")}
+                            onMouseLeave={(e) => (e.currentTarget.style.color = "")}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          </button>
+                          <span className="shrink-0" onClickCapture={() => logReminder(member.id, "expiration")}>
+                            <WhatsAppReminder member={member} type="expiration" dueDate={sub.endDate} compact />
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -395,6 +451,46 @@ export default function Subscriptions() {
           <EmptyState icon={<CreditCard className="h-5 w-5" />} title="Aucun abonnement" hint="Les abonnements actifs apparaîtront ici." />
         )}
       </SectionCard>
+
+      {/* Confirmation de résiliation */}
+      <Modal open={!!cancelTarget} onClose={() => setCancelTarget(null)} title="Résilier l'abonnement">
+        {cancelTarget && (
+          <div className="space-y-5">
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-ink px-4 py-3">
+              {cancelTarget.member ? (
+                <>
+                  <Avatar first={cancelTarget.member.firstName} last={cancelTarget.member.lastName} size={36} />
+                  <div className="leading-tight">
+                    <div className="text-sm font-medium text-bone">
+                      {cancelTarget.member.firstName} {cancelTarget.member.lastName}
+                    </div>
+                    <div className="text-xs text-ash">
+                      {planById.get(cancelTarget.sub.planId)?.name ?? cancelTarget.sub.planId} · fin {formatDateFR(cancelTarget.sub.endDate)}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <span className="text-sm text-ash">Abonnement {cancelTarget.sub.id}</span>
+              )}
+            </div>
+            <p className="text-sm text-ash">
+              Cette action passe l'abonnement au statut « Annulé ». Les échéances ouvertes restent visibles dans
+              l'historique. Confirmer la résiliation ?
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setCancelTarget(null)} className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-semibold text-bone hover:border-white/25">
+                Annuler
+              </button>
+              <button
+                onClick={() => { cancelSubscription(cancelTarget.sub.id); setCancelTarget(null); }}
+                className="flex-1 rounded-xl bg-ember py-2.5 text-sm font-bold text-bone transition-opacity hover:opacity-90"
+              >
+                Résilier
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

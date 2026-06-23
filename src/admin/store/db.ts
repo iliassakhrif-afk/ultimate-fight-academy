@@ -1,5 +1,5 @@
-import type { DB } from "../types";
-import { LS_PREFIX, LS_AUTH, SEED_VERSION } from "../constants";
+import type { DB, AppRole } from "../types";
+import { LS_PREFIX, LS_AUTH, LS_ROLE, SEED_VERSION } from "../constants";
 import { buildSeed } from "./seed";
 
 const KEY = `${LS_PREFIX}.db`;
@@ -84,4 +84,10 @@ export const auth = {
     return false;
   },
   logout: (): void => localStorage.removeItem(LS_AUTH),
+};
+
+// Rôle de la session (démo) : admin / coach / accueil
+export const roleStore = {
+  get: (): AppRole => (localStorage.getItem(LS_ROLE) as AppRole) || "admin",
+  set: (r: AppRole): void => localStorage.setItem(LS_ROLE, r),
 };

@@ -11,9 +11,9 @@ export const TEMPLATES: Record<string, string> = {
 };
 
 export default function WhatsAppReminder({
-  member, type = "paiement", amount, dueDate, compact = false,
+  member, type = "paiement", amount, dueDate, compact = false, onSend,
 }: {
-  member: Member; type?: keyof typeof TEMPLATES; amount?: number; dueDate?: string; compact?: boolean;
+  member: Member; type?: keyof typeof TEMPLATES; amount?: number; dueDate?: string; compact?: boolean; onSend?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const msg = interpolate(TEMPLATES[type], {
@@ -27,7 +27,7 @@ export default function WhatsAppReminder({
 
   if (compact) {
     return (
-      <a href={link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+      <a href={link} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.stopPropagation(); onSend?.(); }}
         className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366]/15 px-3 py-1.5 text-xs font-semibold text-[#25D366] hover:bg-[#25D366]/25">
         <MessageCircle className="h-3.5 w-3.5" /> Relancer
       </a>
@@ -38,7 +38,7 @@ export default function WhatsAppReminder({
     <div className="space-y-3">
       <div className="rounded-xl border border-white/10 bg-ink p-4 text-sm text-bone/90">{msg}</div>
       <div className="flex gap-2">
-        <a href={link} target="_blank" rel="noopener noreferrer" className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-2.5 text-sm font-bold text-white transition-transform hover:scale-[1.02]">
+        <a href={link} target="_blank" rel="noopener noreferrer" onClick={() => onSend?.()} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-2.5 text-sm font-bold text-white transition-transform hover:scale-[1.02]">
           <MessageCircle className="h-4 w-4" /> Ouvrir WhatsApp
         </a>
         <button onClick={copy} className="flex items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold text-ash hover:text-bone">

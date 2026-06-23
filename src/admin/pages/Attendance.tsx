@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import {
   Users, CheckCircle2, UserX, Flame, Search, ChevronRight,
   ClipboardCheck, AlertTriangle, Wallet, ShieldAlert, CalendarX, Zap, Dumbbell, Plus, Check,
+  CalendarOff, Undo2,
 } from "lucide-react";
 import { useStore } from "../store/StoreProvider";
 import * as S from "../store/selectors";
@@ -22,8 +23,16 @@ const DOW_LABELS: Record<WeekDay, string> = {
   LUN: "Lundi", MAR: "Mardi", MER: "Mercredi", JEU: "Jeudi", VEN: "Vendredi", SAM: "Samedi",
 };
 
+type AttendanceStatus = "present" | "no_show" | "excuse";
+
+const STATUS_OPTIONS: { value: AttendanceStatus; label: string; color: string }[] = [
+  { value: "present", label: "Présent", color: "#3ddc84" },
+  { value: "no_show", label: "No-show", color: "#ff3d2e" },
+  { value: "excuse", label: "Excusé", color: "#f5b730" },
+];
+
 export default function Attendance() {
-  const { db, now, checkIn } = useStore();
+  const { db, now, checkIn, markAttendance, removeAttendance } = useStore();
   const navigate = useNavigate();
 
   const todayClasses = useMemo(() => S.todayClasses(db), [db]);
@@ -55,15 +64,22 @@ export default function Attendance() {
     [db.attendance, now],
   );
 
+  // Pointages du jour pour le cours sélectionné (tous statuts), indexés par membre
+  const todaysRecords = useMemo(() => {
+    if (!selected) return new Map<string, { id: string; status: AttendanceStatus }>();
+    const map = new Map<string, { id: string; status: AttendanceStatus }>();
+    db.attendance
+      .filter((a) => a.date === now && a.classSessionId === selected.id)
+      .forEach((a) => map.set(a.memberId, { id: a.id, status: a.status }));
+    return map;
+  }, [db.attendance, now, selected]);
+
   // Membres éligibles au cours sélectionné
   const presentSet = useMemo(() => {
-    if (!selected) return new Set<string>();
-    return new Set(
-      db.attendance
-        .filter((a) => a.date === now && a.classSessionId === selected.id && a.status === "present")
-        .map((a) => a.memberId),
-    );
-  }, [db.attendance, now, selected]);
+    const set = new Set<string>();
+    todaysRecords.forEach((rec, memberId) => { if (rec.status === "present") set.add(memberId); });
+    return set;
+  }, [todaysRecords]);
 
   const eligible = useMemo(() => {
     if (!selected) return [] as Member[];
@@ -97,6 +113,17 @@ export default function Attendance() {
   const doCheckIn = (memberId: string) => {
     if (!selected || presentSet.has(memberId)) return;
     checkIn(memberId, selected.id, "kiosque");
+  };
+
+  // Changer le statut d'un membre déjà pointé (présent / no-show / excusé)
+  const setStatus = (memberId: string, status: AttendanceStatus) => {
+    if (!selected) return;
+    markAttendance(memberId, selected.id, status);
+  };
+
+  // Annuler le pointage (supprime l'enregistrement de présence)
+  const cancelRecord = (recordId: string | undefined) => {
+    if (recordId) removeAttendance(recordId);
   };
 
   return (
@@ -211,45 +238,95 @@ export default function Attendance() {
           ) : (
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
               {eligible.map((m, i) => {
-                const isPresent = presentSet.has(m.id);
+                const record = todaysRecords.get(m.id);
+                const status = record?.status;
+                const isPointed = record != null;
                 const flags = memberFlags(m);
+                const cardClass = isPointed
+                  ? status === "present"
+                    ? "border-[#3ddc84]/40 bg-[#3ddc84]/12"
+                    : status === "no_show"
+                      ? "border-ember/40 bg-ember/12"
+                      : "border-gold/40 bg-gold/12"
+                  : "border-white/10 bg-ink hover:border-white/25 active:bg-steel";
                 return (
-                  <motion.button
+                  <motion.div
                     key={m.id}
-                    type="button"
-                    onClick={() => doCheckIn(m.id)}
-                    disabled={isPresent}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: Math.min(i * 0.012, 0.4) }}
-                    whileTap={isPresent ? undefined : { scale: 0.96 }}
-                    className={`relative flex flex-col items-center gap-2 rounded-2xl border p-3.5 text-center transition-colors ${
-                      isPresent
-                        ? "border-[#3ddc84]/40 bg-[#3ddc84]/12 cursor-default"
-                        : "border-white/10 bg-ink hover:border-white/25 active:bg-steel"
-                    }`}
+                    className={`relative flex flex-col items-center gap-2 rounded-2xl border p-3.5 text-center transition-colors ${cardClass}`}
                   >
-                    {flags.any && !isPresent && (
+                    {flags.any && !isPointed && (
                       <span className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-ember text-white" title="Solde dû / abo expiré / certificat médical">
                         <AlertTriangle className="h-3 w-3" />
                       </span>
                     )}
-                    <Avatar first={m.firstName} last={m.lastName} size={48} />
+                    {isPointed && (
+                      <button
+                        type="button"
+                        onClick={() => cancelRecord(record?.id)}
+                        className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-white/10 text-ash transition-colors hover:bg-white/20 hover:text-bone"
+                        title="Annuler le pointage"
+                      >
+                        <Undo2 className="h-3 w-3" />
+                      </button>
+                    )}
+                    {isPointed ? (
+                      <Avatar first={m.firstName} last={m.lastName} size={48} />
+                    ) : (
+                      <motion.button
+                        type="button"
+                        onClick={() => doCheckIn(m.id)}
+                        whileTap={{ scale: 0.96 }}
+                        className="contents"
+                        aria-label={`Pointer ${m.firstName} ${m.lastName}`}
+                      >
+                        <Avatar first={m.firstName} last={m.lastName} size={48} />
+                      </motion.button>
+                    )}
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-semibold text-bone">{m.firstName}</span>
                       <span className="block truncate text-[11px] text-ash">{m.lastName}</span>
                     </span>
-                    {flags.any && !isPresent && (
+                    {flags.any && !isPointed && (
                       <span className="flex flex-wrap items-center justify-center gap-1">
                         {flags.balance && <span className="inline-flex items-center gap-0.5 rounded-full bg-ember/15 px-1.5 py-0.5 text-[9px] font-semibold text-ember"><Wallet className="h-2.5 w-2.5" />Solde</span>}
                         {flags.subExpired && <span className="inline-flex items-center gap-0.5 rounded-full bg-ember/15 px-1.5 py-0.5 text-[9px] font-semibold text-ember"><ShieldAlert className="h-2.5 w-2.5" />Expiré</span>}
                         {flags.medExpired && <span className="inline-flex items-center gap-0.5 rounded-full bg-gold/15 px-1.5 py-0.5 text-[9px] font-semibold text-gold"><AlertTriangle className="h-2.5 w-2.5" />Médical</span>}
                       </span>
                     )}
-                    <span className={`mt-0.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${isPresent ? "bg-[#3ddc84] text-ink" : "bg-white/8 text-ash"}`}>
-                      {isPresent ? <><CheckCircle2 className="h-3 w-3" /> Présent</> : <><Zap className="h-3 w-3" /> Pointer</>}
-                    </span>
-                  </motion.button>
+                    {isPointed ? (
+                      /* Sélecteur de statut (Présent / No-show / Excusé) pour un membre déjà pointé */
+                      <div className="mt-0.5 flex w-full overflow-hidden rounded-full border border-white/10 bg-ink/60">
+                        {STATUS_OPTIONS.map((opt) => {
+                          const on = status === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setStatus(m.id, opt.value)}
+                              className="flex-1 px-1 py-1 text-[9px] font-bold leading-tight transition-colors"
+                              style={on
+                                ? { background: opt.color, color: "#16110f" }
+                                : { color: "#9a9088" }}
+                              title={opt.label}
+                            >
+                              {opt.value === "present" ? "Prés." : opt.value === "no_show" ? "No-show" : "Excusé"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => doCheckIn(m.id)}
+                        className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-bold text-ash transition-colors hover:bg-white/12 hover:text-bone"
+                      >
+                        <Zap className="h-3 w-3" /> Pointer
+                      </button>
+                    )}
+                  </motion.div>
                 );
               })}
             </div>
@@ -290,6 +367,55 @@ export default function Attendance() {
               </div>
             )}
           </div>
+
+          {/* Pointés du jour — correction rapide (no-show / excuse / annulation) */}
+          {todaysRecords.size > 0 && (
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <label className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ash">
+                <ClipboardCheck className="h-3.5 w-3.5" /> Pointés du jour ({todaysRecords.size}) — corriger un statut
+              </label>
+              <div className="space-y-1.5">
+                {eligible
+                  .filter((m) => todaysRecords.has(m.id))
+                  .map((m) => {
+                    const record = todaysRecords.get(m.id)!;
+                    return (
+                      <div key={m.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-ink px-3 py-2">
+                        <Avatar first={m.firstName} last={m.lastName} size={32} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-bone">{m.firstName} {m.lastName}</p>
+                          <p className="truncate text-[11px] text-ash">{m.memberNo}</p>
+                        </div>
+                        <div className="flex overflow-hidden rounded-full border border-white/10">
+                          {STATUS_OPTIONS.map((opt) => {
+                            const on = record.status === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setStatus(m.id, opt.value)}
+                                className="px-2.5 py-1 text-[11px] font-bold transition-colors"
+                                style={on ? { background: opt.color, color: "#16110f" } : { color: "#9a9088" }}
+                              >
+                                {opt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => cancelRecord(record.id)}
+                          className="flex items-center gap-1 rounded-lg border border-white/10 px-2.5 py-1 text-[11px] font-semibold text-ash transition-colors hover:border-ember/40 hover:text-ember"
+                          title="Annuler le pointage"
+                        >
+                          <CalendarOff className="h-3 w-3" /> Annuler
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

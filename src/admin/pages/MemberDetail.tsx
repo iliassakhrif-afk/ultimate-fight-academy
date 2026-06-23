@@ -5,6 +5,7 @@ import {
   ArrowLeft, Wallet, CalendarClock, Receipt, BadgeCheck, Award, Activity,
   Phone, MessageCircle, Mail, MapPin, Snowflake, Play, ShieldAlert, UserCog,
   TrendingUp, Plus, AlertTriangle, CalendarDays, Hash, Flame, Clock, Tag, Dumbbell,
+  Pencil, RefreshCw, Ban, Users, Target, ChevronRight,
 } from "lucide-react";
 
 import { useStore } from "../store/StoreProvider";
@@ -14,7 +15,7 @@ import {
   DISCIPLINE_LABELS, DISCIPLINE_COLORS, INSTALLMENT_META,
   ADULT_BELTS, KIDS_BELTS,
 } from "../constants";
-import type { BeltRank, DisciplineId } from "../types";
+import type { BeltRank, DisciplineId, Member, Payment } from "../types";
 
 import { StatusBadge, Pill } from "../components/StatusBadge";
 import BeltPill from "../components/BeltPill";
@@ -24,6 +25,8 @@ import { Modal } from "../components/Overlay";
 import EmptyState, { SectionCard } from "../components/EmptyState";
 import CollectPaymentModal from "../components/CollectPaymentModal";
 import WhatsAppReminder from "../components/WhatsAppReminder";
+import ReceiptPrintView from "../components/ReceiptPrintView";
+import ProgressRing from "../components/charts/ProgressRing";
 
 const fade = (i: number) => ({
   initial: { opacity: 0, y: 14 },
@@ -46,7 +49,10 @@ function Bar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function MemberDetail() {
-  const { db, now, freezeMember, promote, addPriceException, removePriceException } = useStore();
+  const {
+    db, now, freezeMember, promote, addPriceException, removePriceException,
+    updateMember, renewSubscription, freezeSubscription, cancelSubscription,
+  } = useStore();
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
@@ -56,6 +62,8 @@ export default function MemberDetail() {
   const [collectOpen, setCollectOpen] = useState(false);
   const [promoteOpen, setPromoteOpen] = useState(false);
   const [excOpen, setExcOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [receiptPayment, setReceiptPayment] = useState<Payment | null>(null);
 
   const installments = useMemo(
     () => (member ? db.installments.filter((i) => i.memberId === id).sort((a, b) => a.sequence - b.sequence) : []),
@@ -97,6 +105,12 @@ export default function MemberDetail() {
     .filter((b) => b.memberId === member.id)
     .sort((a, b) => b.promotedAt.localeCompare(a.promotedAt));
   const isGraded = member.disciplineIds.includes("bjj") || member.disciplineIds.includes("kids");
+  const showCurriculum = member.disciplineIds.includes("bjj");
+  const curriculum = showCurriculum ? S.curriculumProgress(db, member.id, "bjj") : null;
+
+  const family = S.familyOf(db, member.id);
+  const familyOthers = family ? S.familyMembers(db, family.id).filter((m) => m.id !== member.id) : [];
+  const familyBalance = family ? S.familyBalanceDH(db, family.id) : 0;
 
   const plan = sub ? db.plans.find((p) => p.id === sub.planId) ?? null : null;
   const subDaysLeft = sub ? daysBetween(sub.endDate, now) : null;
@@ -108,6 +122,13 @@ export default function MemberDetail() {
   const openCollect = (installmentId: string | null) => {
     setCollectInst(installmentId);
     setCollectOpen(true);
+  };
+
+  const onCancelSub = () => {
+    if (!sub) return;
+    if (window.confirm("Résilier définitivement cet abonnement ? Cette action est irréversible.")) {
+      cancelSubscription(sub.id);
+    }
   };
 
   return (
@@ -162,6 +183,9 @@ export default function MemberDetail() {
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <button onClick={() => navigate("/admin/membres")} className="btn-ghost inline-flex items-center gap-2">
               <ArrowLeft className="h-4 w-4" /> Membres
+            </button>
+            <button onClick={() => setEditOpen(true)} className="btn-ghost inline-flex items-center gap-2">
+              <Pencil className="h-4 w-4 text-gold" /> Modifier la fiche
             </button>
             <button onClick={() => freezeMember(member.id)} className="btn-ghost inline-flex items-center gap-2">
               {member.status === "gele" ? (
@@ -287,7 +311,12 @@ export default function MemberDetail() {
               ) : (
                 <div className="divide-y divide-white/5">
                   {payments.map((p) => (
-                    <div key={p.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <button
+                      key={p.id}
+                      onClick={() => setReceiptPayment(p)}
+                      className="flex w-full items-center justify-between gap-3 py-2.5 text-left transition hover:bg-white/[0.02]"
+                      title="Voir le reçu"
+                    >
                       <div className="flex items-center gap-3">
                         <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#3ddc84]/12 text-[#3ddc84]">
                           <Receipt className="h-4 w-4" />
@@ -300,7 +329,7 @@ export default function MemberDetail() {
                         </div>
                       </div>
                       <span className="font-display text-base tracking-wide tabular-nums text-[#3ddc84]">+{formatDH(p.amountDH)}</span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -357,10 +386,108 @@ export default function MemberDetail() {
                     <span className="text-ash">Montant total{sub.discountLabel ? ` · ${sub.discountLabel}` : ""}</span>
                     <span className="font-display text-lg tracking-wide tabular-nums text-gold">{formatDH(sub.totalDH)}</span>
                   </div>
+
+                  {/* ACTIONS ABONNEMENT */}
+                  <div className="grid grid-cols-3 gap-2 border-t border-white/10 pt-3">
+                    <button
+                      onClick={() => renewSubscription(sub.id)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-ink px-2 py-2.5 text-xs font-semibold text-[#3ddc84] hover:border-[#3ddc84]/40"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Renouveler
+                    </button>
+                    <button
+                      onClick={() => freezeSubscription(sub.id)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-ink px-2 py-2.5 text-xs font-semibold text-gold hover:border-gold/40"
+                    >
+                      {sub.status === "gele" ? (
+                        <><Play className="h-3.5 w-3.5" /> Réactiver</>
+                      ) : (
+                        <><Snowflake className="h-3.5 w-3.5" /> Geler</>
+                      )}
+                    </button>
+                    <button
+                      onClick={onCancelSub}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-ink px-2 py-2.5 text-xs font-semibold text-ember hover:border-ember/40"
+                    >
+                      <Ban className="h-3.5 w-3.5" /> Résilier
+                    </button>
+                  </div>
                 </div>
               )}
             </SectionCard>
           </motion.div>
+
+          {/* PROGRESSION VERS LE GRADE SUIVANT */}
+          {showCurriculum && curriculum && curriculum.nextRank && (
+            <motion.div {...fade(2)}>
+              <SectionCard title="Progression vers le grade suivant">
+                <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center">
+                  <ProgressRing pct={curriculum.pct} color="#ff3d2e" label="vers le grade" />
+                  <div className="flex-1 space-y-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      {curriculum.currentRank && <BeltPill rank={curriculum.currentRank} />}
+                      <ChevronRight className="h-4 w-4 text-ash" />
+                      <BeltPill rank={curriculum.nextRank} />
+                    </div>
+                    <p className="text-sm text-bone">
+                      <span className="font-display text-2xl tracking-wide text-ember">{curriculum.practiced}</span>
+                      <span className="text-ash"> / {curriculum.target} techniques</span>
+                      <span className="text-ash"> vers {curriculum.nextRank}</span>
+                    </p>
+                    {curriculum.focus.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {curriculum.focus.map((f) => (
+                          <span key={f} className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-ink px-2.5 py-1 text-xs text-bone">
+                            <Target className="h-3 w-3 text-gold" /> {f}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </SectionCard>
+            </motion.div>
+          )}
+
+          {/* FAMILLE */}
+          {family && (
+            <motion.div {...fade(2)}>
+              <SectionCard title="Famille" action={<span className="text-xs text-ash">{family.name}</span>}>
+                <div className="space-y-3">
+                  {familyOthers.length === 0 ? (
+                    <p className="text-sm text-ash">Aucun autre membre rattaché à cette famille.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {familyOthers.map((m) => (
+                        <Link
+                          key={m.id}
+                          to={`/admin/membres/${m.id}`}
+                          className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-ink p-2.5 transition hover:border-white/20"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Avatar first={m.firstName} last={m.lastName} size={36} />
+                            <div>
+                              <p className="text-sm font-semibold text-bone">{m.firstName} {m.lastName}</p>
+                              <p className="text-xs text-ash">{m.memberNo}</p>
+                            </div>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-ash" />
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-ink p-3">
+                    <span className="inline-flex items-center gap-2 text-sm text-ash">
+                      <Users className="h-4 w-4 text-gold" /> Solde famille
+                    </span>
+                    <span className={`font-display text-lg tracking-wide tabular-nums ${familyBalance > 0 ? "text-ember" : "text-[#3ddc84]"}`}>
+                      {formatDH(familyBalance)}
+                    </span>
+                  </div>
+                </div>
+              </SectionCard>
+            </motion.div>
+          )}
 
           {/* TARIF & EXCEPTIONS */}
           <motion.div {...fade(2)}>
@@ -606,7 +733,111 @@ export default function MemberDetail() {
         onClose={() => setExcOpen(false)}
         onConfirm={(e) => { addPriceException(member.id, e); setExcOpen(false); }}
       />
+
+      <EditMemberModal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        member={member}
+        onConfirm={(patch) => { updateMember(member.id, patch); setEditOpen(false); }}
+      />
+
+      <ReceiptPrintView
+        open={receiptPayment !== null}
+        onClose={() => setReceiptPayment(null)}
+        payment={receiptPayment}
+      />
     </div>
+  );
+}
+
+/* ---------------- Modale Édition de la fiche ---------------- */
+function EditMemberModal({
+  open, onClose, member, onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  member: Member;
+  onConfirm: (patch: Partial<Member>) => void;
+}) {
+  const [phone, setPhone] = useState(member.phone);
+  const [whatsapp, setWhatsapp] = useState(member.whatsapp);
+  const [email, setEmail] = useState(member.email ?? "");
+  const [address, setAddress] = useState(member.address);
+  const [ecName, setEcName] = useState(member.emergencyContactName);
+  const [ecPhone, setEcPhone] = useState(member.emergencyContactPhone);
+  const [medExpiry, setMedExpiry] = useState(member.medicalCertExpiry ?? "");
+  const [waiver, setWaiver] = useState(member.waiverSigned);
+  const [notes, setNotes] = useState(member.internalNotes);
+
+  const submit = () => {
+    onConfirm({
+      phone: phone.trim(),
+      whatsapp: whatsapp.trim(),
+      email: email.trim() ? email.trim() : null,
+      address: address.trim(),
+      emergencyContactName: ecName.trim(),
+      emergencyContactPhone: ecPhone.trim(),
+      medicalCertExpiry: medExpiry ? medExpiry : null,
+      waiverSigned: waiver,
+      internalNotes: notes,
+    });
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Modifier la fiche">
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Téléphone</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} className="field" placeholder="06 …" />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">WhatsApp</label>
+            <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="field" placeholder="06 …" />
+          </div>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Email</label>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className="field" placeholder="exemple@mail.com" />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Adresse</label>
+          <input value={address} onChange={(e) => setAddress(e.target.value)} className="field" placeholder="Quartier, ville…" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Contact d'urgence</label>
+            <input value={ecName} onChange={(e) => setEcName(e.target.value)} className="field" placeholder="Nom" />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Tél. urgence</label>
+            <input value={ecPhone} onChange={(e) => setEcPhone(e.target.value)} className="field" placeholder="06 …" />
+          </div>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Certificat médical (validité)</label>
+          <input value={medExpiry} onChange={(e) => setMedExpiry(e.target.value)} type="date" className="field" />
+        </div>
+        <button
+          type="button"
+          onClick={() => setWaiver((w) => !w)}
+          className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold ${waiver ? "border-[#3ddc84]/40 bg-[#3ddc84]/10 text-[#3ddc84]" : "border-white/10 text-ash hover:text-bone"}`}
+        >
+          <span className="inline-flex items-center gap-2"><BadgeCheck className="h-4 w-4" /> Décharge signée</span>
+          <span className="text-xs">{waiver ? "Oui" : "Non"}</span>
+        </button>
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ash">Notes internes</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="field w-full resize-none" placeholder="Remarques privées…" />
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} className="btn-ghost flex-1">Annuler</button>
+          <button onClick={submit} className="btn-primary flex-1 inline-flex items-center justify-center gap-2">
+            <Pencil className="h-4 w-4" /> Enregistrer
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarDays, Clock, Users, Dumbbell, MapPin, UserCog, Send, Filter } from "lucide-react";
+import { CalendarDays, Clock, Users, Dumbbell, MapPin, UserCog, Filter, Plus, Pencil, Trash2, Moon } from "lucide-react";
 import { useStore } from "../store/StoreProvider";
 import { DISCIPLINE_LABELS, DISCIPLINE_COLORS, DISCIPLINE_SHORT, WEEK_DAYS } from "../constants";
+import * as S from "../store/selectors";
 import { formatNum } from "../store/format";
 import StatCard from "../components/StatCard";
 import { Pill } from "../components/StatusBadge";
+import { Modal } from "../components/Overlay";
 import EmptyState, { SectionCard } from "../components/EmptyState";
 import type { ClassSession, Coach, DisciplineId, WeekDay } from "../types";
 
@@ -26,6 +28,24 @@ const DAY_LABELS: Record<WeekDay, string> = {
   SAM: "Samedi",
 };
 
+const ALL_DISCIPLINES: DisciplineId[] = ["bjj", "mma", "kickboxing", "boxe", "kids", "women"];
+const LEVEL_OPTIONS: ClassSession["level"][] = ["enfants", "ado", "adultes", "debutants", "avance"];
+const VARIANT_OPTIONS: NonNullable<ClassSession["variant"]>[] = ["Gi", "No-Gi", "Kickboxing", "Boxe"];
+
+type SessionForm = {
+  disciplineId: DisciplineId;
+  label: string;
+  level: ClassSession["level"];
+  variant: ClassSession["variant"];
+  dayOfWeek: WeekDay;
+  startTime: string;
+  endTime: string;
+  coachId: string;
+  room: string;
+  capacity: number;
+  isActive: boolean;
+};
+
 // Durée d'un créneau en heures (HH:MM)
 function sessionHours(s: ClassSession): number {
   const [sh, sm] = s.startTime.split(":").map(Number);
@@ -37,9 +57,12 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const fmtH = (n: number) => `${formatNum(round1(n))} h`;
 
 export default function Schedule() {
-  const { db } = useStore();
+  const { db, addClassSession, updateClassSession, removeClassSession } = useStore();
+  const ramadan = db.settings.ramadanMode;
   const [discFilter, setDiscFilter] = useState<DisciplineId | "all">("all");
   const [coachFilter, setCoachFilter] = useState<string | "all">("all");
+  // null = fermé ; "new" = création ; sinon = id du créneau édité
+  const [editing, setEditing] = useState<ClassSession | "new" | null>(null);
 
   const coachById = useMemo(() => new Map(db.coaches.map((c) => [c.id, c])), [db.coaches]);
   const coachName = (id: string): string => {
@@ -114,8 +137,10 @@ export default function Schedule() {
   }, [scheduledCoaches, activeSessions]);
   const maxCoachHours = Math.max(1, ...coachLoad.map((r) => r.hours));
 
-  const publish = () => {
-    window.alert("Planning synchronisé avec la vitrine ✓\nLes créneaux publics seront mis à jour au prochain rafraîchissement du site.");
+  const remove = (s: ClassSession) => {
+    if (window.confirm(`Supprimer le cours « ${s.label} » (${DAY_LABELS[s.dayOfWeek]} ${s.startTime}) ?`)) {
+      removeClassSession(s.id);
+    }
   };
 
   return (
@@ -124,10 +149,17 @@ export default function Schedule() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="font-display text-4xl tracking-wide">PLANNING</h1>
-          <p className="text-ash">Grille hebdomadaire des cours — du lundi au samedi.</p>
+          <p className="text-ash">
+            Grille hebdomadaire des cours — du lundi au samedi.
+            {ramadan && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 align-middle text-[11px] font-semibold text-gold">
+                <Moon size={11} /> Horaires Ramadan actifs
+              </span>
+            )}
+          </p>
         </div>
-        <button type="button" onClick={publish} className="btn-primary inline-flex items-center gap-2">
-          <Send size={16} /> Publier vers le site
+        <button type="button" onClick={() => setEditing("new")} className="btn-primary inline-flex items-center gap-2">
+          <Plus size={16} /> Ajouter un cours
         </button>
       </div>
 
@@ -234,18 +266,26 @@ export default function Schedule() {
                   )}
                   {col.sessions.map((s) => {
                     const color = DISCIPLINE_COLORS[s.disciplineId];
+                    const start = S.ramadanTime(s.startTime, ramadan);
+                    const end = S.ramadanTime(s.endTime, ramadan);
+                    const shifted = ramadan && (start !== s.startTime || end !== s.endTime);
                     return (
                       <div
                         key={s.id}
-                        className="rounded-xl border bg-ink/70 p-2.5"
+                        className="group/cs rounded-xl border bg-ink/70 p-2.5"
                         style={{ borderColor: `${color}40`, boxShadow: `inset 3px 0 0 ${color}` }}
                       >
                         <div className="mb-1 flex items-center justify-between gap-2">
                           <span className="rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider" style={{ background: `${color}22`, color }}>
                             {DISCIPLINE_SHORT[s.disciplineId]}
                           </span>
-                          <span className="font-mono text-[11px] tabular-nums text-ash">
-                            {s.startTime}–{s.endTime}
+                          <span className="inline-flex items-center gap-1 font-mono text-[11px] tabular-nums text-ash">
+                            {shifted && (
+                              <span className="inline-flex items-center gap-0.5 rounded bg-gold/15 px-1 py-px text-[9px] font-bold not-italic text-gold">
+                                <Moon size={9} /> RAM
+                              </span>
+                            )}
+                            {start}–{end}
                           </span>
                         </div>
                         <p className="text-sm font-semibold leading-tight text-bone">{s.label}</p>
@@ -266,6 +306,23 @@ export default function Schedule() {
                               <Users size={12} className="text-ash/70" /> {s.capacity}
                             </span>
                           </div>
+                        </div>
+                        <div className="mt-2 flex items-center gap-1.5 border-t border-white/5 pt-2 opacity-0 transition-opacity group-hover/cs:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => setEditing(s)}
+                            className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-white/10 bg-ink px-2 py-1 text-[10px] font-semibold text-ash transition-colors hover:border-gold/50 hover:text-gold"
+                          >
+                            <Pencil size={11} /> Éditer
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => remove(s)}
+                            className="inline-flex items-center justify-center rounded-lg border border-white/10 bg-ink px-2 py-1 text-ash transition-colors hover:border-ember/50 hover:text-ember"
+                            aria-label="Supprimer"
+                          >
+                            <Trash2 size={11} />
+                          </button>
                         </div>
                       </div>
                     );
@@ -323,6 +380,202 @@ export default function Schedule() {
           ))}
         </div>
       </SectionCard>
+
+      {/* Modal création / édition */}
+      {editing !== null && (
+        <SessionModal
+          session={editing === "new" ? null : editing}
+          coaches={db.coaches}
+          defaultCoachId={db.coaches[0]?.id ?? ""}
+          ramadan={ramadan}
+          onClose={() => setEditing(null)}
+          onCreate={(form) => {
+            addClassSession(form);
+            setEditing(null);
+          }}
+          onUpdate={(id, form) => {
+            updateClassSession(id, form);
+            setEditing(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function SessionModal({
+  session,
+  coaches,
+  defaultCoachId,
+  ramadan,
+  onClose,
+  onCreate,
+  onUpdate,
+}: {
+  session: ClassSession | null;
+  coaches: Coach[];
+  defaultCoachId: string;
+  ramadan: boolean;
+  onClose: () => void;
+  onCreate: (form: SessionForm) => void;
+  onUpdate: (id: string, form: SessionForm) => void;
+}) {
+  const isEdit = session !== null;
+  const [form, setForm] = useState<SessionForm>(() => ({
+    disciplineId: session?.disciplineId ?? "bjj",
+    label: session?.label ?? "",
+    level: session?.level ?? "adultes",
+    variant: session?.variant ?? null,
+    dayOfWeek: session?.dayOfWeek ?? "LUN",
+    startTime: session?.startTime ?? "18:00",
+    endTime: session?.endTime ?? "19:00",
+    coachId: session?.coachId ?? defaultCoachId,
+    room: session?.room ?? "Tatami 1",
+    capacity: session?.capacity ?? 20,
+    isActive: session?.isActive ?? true,
+  }));
+
+  const set = <K extends keyof SessionForm>(key: K, value: SessionForm[K]) => setForm((f) => ({ ...f, [key]: value }));
+
+  const ramStart = S.ramadanTime(form.startTime, ramadan);
+  const ramEnd = S.ramadanTime(form.endTime, ramadan);
+  const ramShift = ramadan && (ramStart !== form.startTime || ramEnd !== form.endTime);
+
+  const submit = () => {
+    const payload: SessionForm = { ...form, label: form.label.trim() || "Nouveau cours", room: form.room.trim() || "Tatami 1" };
+    if (isEdit && session) onUpdate(session.id, payload);
+    else onCreate(payload);
+  };
+
+  return (
+    <Modal open onClose={onClose} title={isEdit ? "Modifier le cours" : "Ajouter un cours"} width="max-w-2xl">
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Intitulé du cours</label>
+          <input
+            type="text"
+            className="field"
+            value={form.label}
+            placeholder="Ex. BJJ Fondamentaux"
+            onChange={(e) => set("label", e.target.value)}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Discipline</label>
+            <select className="field" value={form.disciplineId} onChange={(e) => set("disciplineId", e.target.value as DisciplineId)}>
+              {ALL_DISCIPLINES.map((d) => (
+                <option key={d} value={d}>
+                  {DISCIPLINE_LABELS[d]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Niveau</label>
+            <select className="field" value={form.level} onChange={(e) => set("level", e.target.value as ClassSession["level"])}>
+              {LEVEL_OPTIONS.map((l) => (
+                <option key={l} value={l}>
+                  {LEVEL_LABELS[l]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Variante</label>
+            <select
+              className="field"
+              value={form.variant ?? ""}
+              onChange={(e) => set("variant", (e.target.value || null) as ClassSession["variant"])}
+            >
+              <option value="">Aucune</option>
+              {VARIANT_OPTIONS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Jour</label>
+            <select className="field" value={form.dayOfWeek} onChange={(e) => set("dayOfWeek", e.target.value as WeekDay)}>
+              {WEEK_DAYS.map((d) => (
+                <option key={d} value={d}>
+                  {DAY_LABELS[d]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Début</label>
+            <input type="time" className="field" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Fin</label>
+            <input type="time" className="field" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Coach</label>
+            <select className="field" value={form.coachId} onChange={(e) => set("coachId", e.target.value)}>
+              {coaches.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.firstName} {c.lastName}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Salle</label>
+            <input type="text" className="field" value={form.room} placeholder="Tatami 1" onChange={(e) => set("room", e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-ash">Capacité</label>
+            <input
+              type="number"
+              min={1}
+              className="field"
+              value={form.capacity}
+              onChange={(e) => set("capacity", Math.max(1, Number(e.target.value) || 1))}
+            />
+          </div>
+        </div>
+
+        {ramShift && (
+          <div className="flex items-center gap-2 rounded-xl border border-gold/30 bg-gold/10 px-3 py-2.5 text-xs text-gold">
+            <Moon size={14} className="shrink-0" />
+            <span>
+              Mode Ramadan actif : ce créneau du soir sera affiché à{" "}
+              <span className="font-mono font-bold">
+                {ramStart}–{ramEnd}
+              </span>{" "}
+              sur le planning et la vitrine.
+            </span>
+          </div>
+        )}
+
+        <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-ink px-4 py-3">
+          <input
+            type="checkbox"
+            checked={form.isActive}
+            onChange={(e) => set("isActive", e.target.checked)}
+            className="h-4 w-4 accent-ember"
+          />
+          <span className="text-sm text-bone">Cours actif</span>
+          <span className="text-xs text-ash">— visible sur le planning et la vitrine</span>
+        </label>
+
+        <div className="flex items-center justify-end gap-3 border-t border-white/5 pt-4">
+          <button type="button" onClick={onClose} className="btn-ghost text-xs">
+            Annuler
+          </button>
+          <button type="button" onClick={submit} className="btn-primary text-xs">
+            {isEdit ? "Enregistrer" : "Ajouter le cours"}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

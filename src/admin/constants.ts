@@ -1,7 +1,7 @@
-import type { DisciplineId, BeltRank, MemberStatus, InstallmentStatus } from "./types";
+import type { DisciplineId, BeltRank, MemberStatus, InstallmentStatus, AppRole } from "./types";
 
 export const DEMO_CLOCK = "2026-06-18";
-export const SEED_VERSION = 4;
+export const SEED_VERSION = 5;
 export const ADMIN_PIN = "1234";
 export const LS_PREFIX = "ufa.admin.v1";
 export const LS_AUTH = "ufa.admin.auth";
@@ -73,12 +73,15 @@ export const NAV_GROUPS: { group: string; items: { label: string; to: string; ic
     items: [
       { label: "Tableau de bord", to: "/admin", icon: "LayoutDashboard", end: true },
       { label: "Statistiques", to: "/admin/statistiques", icon: "TrendingUp" },
+      { label: "Portail membre", to: "/admin/portail", icon: "Smartphone" },
     ],
   },
   {
     group: "Membres",
     items: [
       { label: "Membres", to: "/admin/membres", icon: "Users" },
+      { label: "Prospects", to: "/admin/prospects", icon: "UserPlus" },
+      { label: "Familles", to: "/admin/familles", icon: "UsersRound" },
       { label: "Présences", to: "/admin/presences", icon: "ClipboardCheck" },
       { label: "Techniques", to: "/admin/techniques", icon: "Dumbbell" },
       { label: "Grades & ceintures", to: "/admin/grades", icon: "Award" },
@@ -108,3 +111,22 @@ export const MA_LAST = ["El Amrani", "Benjelloun", "Tazi", "Cherkaoui", "Bouazza
 export const KENITRA_AREAS = ["Maâmora", "Mimosas", "Val Fleuri", "Bir Rami", "Ouled Oujih", "Saknia", "La Ville Haute", "Khabazat"];
 
 export const WEEK_DAYS = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM"] as const;
+
+// Curriculum BJJ : exigences (nb de techniques distinctes maîtrisées) pour passer au grade suivant
+export const BELT_CURRICULUM: { from: BeltRank; to: BeltRank; target: number; focus: string[] }[] = [
+  { from: "blanche", to: "bleue", target: 12, focus: ["Mouvement", "Garde", "Contrôle", "Échappe", "Soumission"] },
+  { from: "bleue", to: "violette", target: 22, focus: ["Passage", "Renversement", "Soumission", "Soumission jambe"] },
+  { from: "violette", to: "marron", target: 34, focus: ["Passage", "Renversement", "Soumission", "Soumission jambe", "Projection"] },
+  { from: "marron", to: "noire", target: 48, focus: ["Soumission", "Soumission jambe", "Projection", "Passage"] },
+];
+
+// Rôles de l'app (démo) et leurs permissions
+export const ROLE_META: Record<AppRole, { label: string; icon: string; canMoney: boolean; canPromote: boolean; canConfig: boolean }> = {
+  admin: { label: "Administrateur", icon: "ShieldCheck", canMoney: true, canPromote: true, canConfig: true },
+  coach: { label: "Coach", icon: "Dumbbell", canMoney: false, canPromote: true, canConfig: false },
+  accueil: { label: "Accueil", icon: "ClipboardCheck", canMoney: true, canPromote: false, canConfig: false },
+};
+export const LS_ROLE = "ufa.admin.role";
+
+// Décalage des créneaux du soir pendant le Ramadan (après la rupture du jeûne)
+export const RAMADAN_EVENING_SHIFT_MIN = 90; // +1h30 sur les cours débutant après 17h
